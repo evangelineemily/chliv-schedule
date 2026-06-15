@@ -3,7 +3,7 @@ import {
   doc, collection, onSnapshot, setDoc, updateDoc,
   getDoc, getDocs, deleteDoc, writeBatch
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db } from "/firebase";
 
 // ── HELPERS ──────────────────────────────────────────────
 // Convert a plain object to/from Firestore-safe format
