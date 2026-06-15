@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { useFirestore } from "./useFirestore";
+import { useFirestore } from "/useFirestore";
 
 // ── ACCOUNTS ─────────────────────────────────────────────
 const ACCOUNTS = {
