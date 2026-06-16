@@ -179,6 +179,53 @@ const INIT_EMPS = [
   {id:"026",name:"廖菀淇", eng:"Teresa", type:"兼職",role:"staff",  certified:false,stores:["jiufen","huashan","xinguang"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2024/03/01",seniority:"2年3月", annualLeft:0, annualExpiry:"—",lastLeaveGrant:null,    sickUsed:0,personalUsed:0},
 ];
 
+// ── GOOGLE SHEET SYNC ────────────────────────────────────
+const GAS_URL = "https://script.google.com/macros/s/AKfycbwWPLsRknUwDv8giY-E_oJPU1pLgDPTktvQzuwwsaS6Egw3wEUOzOD6kYoNI-HM_r74/exec";
+
+function syncToSheet(type, payload) {
+  fetch(GAS_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, payload })
+  }).catch(e => console.warn("Sheet sync error:", e));
+}
+
+function syncLeaveReq(req, emps) {
+  const emp = emps.find(e => e.id === req.empId);
+  syncToSheet("leaveRequest", { ...req, empName: emp ? emp.name : req.empId });
+}
+
+function syncOvertimeReq(req, emps) {
+  const emp = emps.find(e => e.id === req.empId);
+  syncToSheet("overtimeRequest", { ...req, empName: emp ? emp.name : req.empId });
+}
+
+function syncEmployee(emp) {
+  syncToSheet("employee", emp);
+}
+
+function syncScheduleDay(store, year, month, day, slots, emps) {
+  syncToSheet("schedule", {
+    store, year, month, day,
+    slots: slots.map(s => ({
+      ...s,
+      empName: (emps.find(e => e.id === s.empId)||{}).name || s.empId
+    }))
+  });
+}
+
+function syncSkillAssess(empId, emps, assessData) {
+  const emp = emps.find(e => e.id === empId);
+  const items = Object.entries(assessData).map(([skill, v]) => ({ skill, date: v.date, result: v.result }));
+  syncToSheet("skillAssess", { empId, empName: emp ? emp.name : empId, items });
+}
+
+function syncMonthlyReview(empId, year, month, reviewer, scores, notes, emps) {
+  const emp = emps.find(e => e.id === empId);
+  syncToSheet("monthlyReview", { empId, empName: emp ? emp.name : empId, year, month, reviewer, scores, notes });
+}
+
 // ── FIREBASE HELPERS ─────────────────────────────────────
 function useFbState(col, docId, defaultVal, reviver) {
   const [val, setValRaw] = useState(defaultVal);
@@ -287,7 +334,10 @@ function App() {
   const hols = getTwHolidays(vY,vM);
   const dk = (y,m,d) => `${y}-${m}-${d}`;
   const getSD = (sk,day) => (sched[sk]||{})[dk(vY,vM,day)]||[];
-  const setSD = (sk,day,slots) => setSched(p=>({...p,[sk]:{...(p[sk]||{}),[dk(vY,vM,day)]:slots}}));
+  const setSD = (sk,day,slots) => {
+    setSched(p=>({...p,[sk]:{...(p[sk]||{}),[dk(vY,vM,day)]:slots}}));
+    syncScheduleDay(sk, vY, vM, day, slots, emps);
+  };
   const getEmp = id => emps.find(e=>e.id===id);
   const today=now.getDate();
   // TEMP: fill-window restriction disabled for testing. Restore with:
@@ -1280,8 +1330,8 @@ function StaffMgr({emps,setEmps}){
   const flip=(id,f)=>setEmps(es=>es.map(e=>e.id===id?{...e,[f]:!e[f]}:e));
   const togStore=(id,k)=>setEmps(es=>es.map(e=>e.id===id?{...e,stores:e.stores.includes(k)?e.stores.filter(x=>x!==k):[...e.stores,k]}:e));
   const togPrimary=(id,k)=>setEmps(es=>es.map(e=>e.id===id?{...e,primaryStores:(e.primaryStores||[]).includes(k)?(e.primaryStores||[]).filter(x=>x!==k):[...(e.primaryStores||[]),k]}:e));
-  const saveEdit=()=>{setEmps(es=>es.map(e=>e.id===editEmp.id?editEmp:e));setEditEmp(null);};
-  const addEmp=()=>{if(!ne.id||!ne.name)return;setEmps(e=>[...e,ne]);setShowAdd(false);setNe(blank);};
+  const saveEdit=()=>{setEmps(es=>es.map(e=>e.id===editEmp.id?editEmp:e));syncEmployee(editEmp);setEditEmp(null);};
+  const addEmp=()=>{if(!ne.id||!ne.name)return;setEmps(e=>[...e,ne]);syncEmployee(ne);setShowAdd(false);setNe(blank);};
   return(
     <div>
       <h2 style={PT}>人力管理</h2>
@@ -1499,7 +1549,15 @@ function FillStatus({emps,mustOff,partAvail,vY,vM,dim,fillOpen,fillClosed,canFil
 function ExtraLeaveApproval({vY,vM,extraLeaveReqs,setExtraLeaveReqs,getEmp}){
   const monthReqs=extraLeaveReqs.filter(r=>r.year===vY&&r.month===vM);
   if(!monthReqs.length) return null;
-  const setStatus=(id,status)=>setExtraLeaveReqs(p=>p.map(r=>r.id===id?{...r,status}:r));
+  const setStatus=(id,status)=>{
+    setExtraLeaveReqs(p=>p.map(r=>{
+      if(r.id!==id) return r;
+      const updated={...r,status};
+      const emp=getEmp(r.empId);
+      syncLeaveReq(updated, emp?[emp]:[]);
+      return updated;
+    }));
+  };
   const statusLabel={pending:"待審核",approved:"已核准",rejected:"已拒絕"};
   const statusColor={pending:"#e67e22",approved:"#27ae60",rejected:"#e74c3c"};
   const pending=monthReqs.filter(r=>r.status==="pending");
@@ -1828,11 +1886,14 @@ function ExtraLeaveSection({emp,vY,vM,dim,extraLeaveReqs,setExtraLeaveReqs}){
     if(!day){setWarn("請選擇日期");return;}
     if(!reason.trim()){setWarn("請填寫請假原因");return;}
     setWarn("");
-    setExtraLeaveReqs(p=>[...p,{
+    const newReq = {
       id:`${emp.id}-${vY}-${vM}-${day}-${Date.now()}`,
-      empId:emp.id, year:vY, month:vM, day:Number(day), reason:reason.trim(),
+      empId:emp.id, year:vY, month:vM, day:Number(day),
+      leaveType:reason.trim(), reason:reason.trim(),
       status:"pending", ts:Date.now()
-    }]);
+    };
+    setExtraLeaveReqs(p=>[...p, newReq]);
+    syncLeaveReq(newReq, [emp]);
     setDay(""); setReason("");
   };
 
@@ -1904,7 +1965,6 @@ function AssessMgr({emps,setEmps,vY,vM,skillAssess,setSkillAssess,monthlyReviews
 
   const setResult=(empId,stage,result)=>{
     setStage(empId,stage,{result});
-    // After update, check if all 3 stages pass -> mark as barista
     setTimeout(()=>{
       setSkillAssess(p=>{
         const allPass=SKILL_STAGES.every(s=>{
@@ -1912,8 +1972,16 @@ function AssessMgr({emps,setEmps,vY,vM,skillAssess,setSkillAssess,monthlyReviews
           return s.key===stage ? result==="pass" : r==="pass";
         });
         if(allPass){
-          setEmps(es=>es.map(e=>e.id===empId?{...e,role:"barista",certified:true}:e));
+          setEmps(es=>es.map(e=>{
+            if(e.id!==empId) return e;
+            const updated={...e,role:"barista",certified:true};
+            syncEmployee(updated);
+            return updated;
+          }));
         }
+        // sync skill assess
+        const updatedAssess={...(p[empId]||{}),[stage]:{...getStage(empId,stage),result}};
+        syncSkillAssess(empId, emps, updatedAssess);
         return p;
       });
     },0);
@@ -1928,14 +1996,20 @@ function AssessMgr({emps,setEmps,vY,vM,skillAssess,setSkillAssess,monthlyReviews
     setMonthlyReviews(p=>{
       const rev=getReview(empId);
       const scores={...rev.scores,[user.username]:{...rev.scores[user.username],[dim]:val}};
-      return {...p,[empId]:{...(p[empId]||{}),[monthKey]:{...rev,scores}}};
+      const updated={...p,[empId]:{...(p[empId]||{}),[monthKey]:{...rev,scores}}};
+      const r=updated[empId][monthKey];
+      syncMonthlyReview(empId,vY,vM,user.username,r.scores[user.username]||{},r.notes[user.username]||{improve:"",bonus:""},emps);
+      return updated;
     });
   };
   const updateNote=(empId,field,val)=>{
     setMonthlyReviews(p=>{
       const rev=getReview(empId);
       const notes={...rev.notes,[user.username]:{...rev.notes[user.username],[field]:val}};
-      return {...p,[empId]:{...(p[empId]||{}),[monthKey]:{...rev,notes}}};
+      const updated={...p,[empId]:{...(p[empId]||{}),[monthKey]:{...rev,notes}}};
+      const r=updated[empId][monthKey];
+      syncMonthlyReview(empId,vY,vM,user.username,r.scores[user.username]||{},r.notes[user.username]||{improve:"",bonus:""},emps);
+      return updated;
     });
   };
 
@@ -2160,11 +2234,13 @@ function MyOvertime({user,emps,vY,vM,dim,overtimeReqs,setOvertimeReqs}){
     if(!hours||Number(hours)<=0){setWarn("請輸入加班時數");return;}
     if(!reason.trim()){setWarn("請填寫加班原因");return;}
     setWarn("");
-    setOvertimeReqs(p=>[...p,{
+    const newOT = {
       id:`${emp.id}-${vY}-${vM}-${day}-${Date.now()}`,
       empId:emp.id, year:vY, month:vM, day:Number(day), hours:Number(hours), reason:reason.trim(),
       status:"pending", ts:Date.now()
-    }]);
+    };
+    setOvertimeReqs(p=>[...p, newOT]);
+    syncOvertimeReq(newOT, [emp]);
     setDay(""); setHours(""); setReason("");
   };
 
@@ -2220,7 +2296,14 @@ function HoursMgr({emps,vY,vM,dim,getSD,overtimeReqs,setOvertimeReqs}){
   const pending=monthReqs.filter(r=>r.status==="pending");
   const statusLabel={pending:"待審核",approved:"已核准",rejected:"已拒絕"};
   const statusColor={pending:"#e67e22",approved:"#27ae60",rejected:"#e74c3c"};
-  const setStatus=(id,status)=>setOvertimeReqs(p=>p.map(r=>r.id===id?{...r,status}:r));
+  const setStatus=(id,status)=>{
+    setOvertimeReqs(p=>p.map(r=>{
+      if(r.id!==id) return r;
+      const updated={...r,status};
+      syncOvertimeReq(updated, emps);
+      return updated;
+    }));
+  };
 
   // Calculate part-timer total hours from schedule
   const partTimerHours=empId=>{
