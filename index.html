@@ -9,6 +9,25 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Firebase -->
+  <script type="module" id="fb-init">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    const firebaseConfig = {
+      apiKey: "AIzaSyCMI6HCjBynguXdws8NPUI8Doo0DSPRs8E",
+      authDomain: "schedule-e92d3.firebaseapp.com",
+      projectId: "schedule-e92d3",
+    };
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    window.__db = db;
+    window.__fbReady = true;
+    window.__fbDoc = (col, id) => doc(db, col, id);
+    window.__fbGet = (col, id) => getDoc(doc(db, col, id));
+    window.__fbSet = (col, id, data) => setDoc(doc(db, col, id), data, {merge:true});
+    window.__fbListen = (col, id, cb) => onSnapshot(doc(db, col, id), snap => cb(snap.exists() ? snap.data() : null));
+    window.dispatchEvent(new Event("fb-ready"));
+  </script>
   <style>* { margin:0; padding:0; box-sizing:border-box; } body { font-family:'Noto Sans TC',sans-serif; }</style>
 </head>
 <body>
@@ -160,108 +179,109 @@ const INIT_EMPS = [
   {id:"026",name:"廖菀淇", eng:"Teresa", type:"兼職",role:"staff",  certified:false,stores:["jiufen","huashan","xinguang"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2024/03/01",seniority:"2年3月", annualLeft:0, annualExpiry:"—",lastLeaveGrant:null,    sickUsed:0,personalUsed:0},
 ];
 
+// ── FIREBASE HELPERS ─────────────────────────────────────
+function useFbState(col, docId, defaultVal, reviver) {
+  const [val, setValRaw] = useState(defaultVal);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    if (!window.__fbListen) { setLoaded(true); return; }
+    const unsub = window.__fbListen(col, docId, data => {
+      if (data && data.v !== undefined) {
+        try {
+          const parsed = JSON.parse(data.v);
+          setValRaw(reviver ? reviver(parsed) : parsed);
+        } catch(e) {}
+      }
+      setLoaded(true);
+    });
+    return unsub;
+  }, [col, docId]);
+  const setVal = useCallback(updater => {
+    setValRaw(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (window.__fbSet) {
+        const serializable = next instanceof Object && !(next instanceof Set) && !Array.isArray(next)
+          ? Object.fromEntries(Object.entries(next).map(([k,v]) => [k, v instanceof Set ? [...v] : v]))
+          : next;
+        window.__fbSet(col, docId, { v: JSON.stringify(serializable) });
+      }
+      return next;
+    });
+  }, [col, docId]);
+  return [val, setVal, loaded];
+}
+
 // ── MAIN APP ─────────────────────────────────────────────
 function App() {
   const [user,setUser]   = useState(null);
   const [page,setPage]   = useState("overview");
-  const [emps,setEmps]   = useState(INIT_EMPS);
+  const [fbReady, setFbReady] = useState(!!window.__fbReady);
+  useEffect(() => {
+    if (window.__fbReady) { setFbReady(true); return; }
+    const h = () => setFbReady(true);
+    window.addEventListener("fb-ready", h);
+    return () => window.removeEventListener("fb-ready", h);
+  }, []);
   const now = useMemo(()=>new Date(),[]);
 
+  const [emps,setEmps,empsLoaded]   = useFbState("app","emps", INIT_EMPS);
   // Auto-grant annual leave on work anniversaries (Taiwan Labor Standards Act).
-  // Each employee's `lastLeaveGrant` stores a key for the most recent
-  // anniversary already granted. If today's "last anniversary" is newer,
-  // grant the entitlement for that anniversary year and advance the key.
-  // annualExpiry is set to 1 year after that anniversary (ROC calendar).
   useEffect(()=>{
+    if(!empsLoaded) return;
     setEmps(prev=>prev.map(e=>{
       if(e.type!=="正職"||!e.joinDate||!e.active) return e;
       const last=lastAnniversary(e.joinDate,now);
       if(!last) return e;
       const lastKey=`${last.getFullYear()}-${last.getMonth()}-${last.getDate()}`;
-      if(e.lastLeaveGrant===lastKey) return e; // already granted for this anniversary
+      if(e.lastLeaveGrant===lastKey) return e;
       const yos=yearsOfService(e.joinDate,now);
       const entitlement=annualLeaveEntitlement(yos);
       const expiry=new Date(last.getFullYear()+1, last.getMonth(), last.getDate());
       const expiryStr=`${expiry.getFullYear()-1911}/${String(expiry.getMonth()+1).padStart(2,"0")}`;
-      return {
-        ...e,
-        annualLeft:(e.annualLeft||0)+entitlement,
-        annualExpiry:expiryStr,
-        lastLeaveGrant:lastKey,
-      };
+      return {...e, annualLeft:(e.annualLeft||0)+entitlement, annualExpiry:expiryStr, lastLeaveGrant:lastKey};
     }));
-  },[now]);
-  const [vY,setVY] = useState(2026); // default to test month with seeded data
-  const [vM,setVM] = useState(5); // June (0-indexed)
+  },[now, empsLoaded]);
 
-  // schedule[storeKey][`${y}-${m}-${d}`] = [{empId,position,shift,leave}]
-  const [sched,setSched]   = useState({});
-  // mustOff[empId] = [{year,month,day,ts}]
-  const [mustOff,setMustOff] = useState({
-    // Seed data for testing: 2026/06 (month index 5)
-    "007": [ // 姜睿涵 Jessie
-      {year:2026,month:5,day:11,ts:1},
-      {year:2026,month:5,day:16,ts:2},
-    ],
-    "038": [ // 徐嘉鈞 James
-      {year:2026,month:5,day:5,ts:1},
-      {year:2026,month:5,day:6,ts:2},
-    ],
-    "034": [ // 董昱辰 Aubrey
-      {year:2026,month:5,day:1,ts:1},
-      {year:2026,month:5,day:4,ts:2},
-      {year:2026,month:5,day:21,ts:3},
-    ],
-    "029": [ // 蘇瑞容 Ray
-      {year:2026,month:5,day:22,ts:1},
-      {year:2026,month:5,day:23,ts:2},
-    ],
-    "023": [ // 朱紫綺 Wendy
-      {year:2026,month:5,day:26,ts:1},
-    ],
-  });
-  // partAvail[empId] = [{year,month,day,startTime,endTime}]
-  const [partAvail,setPA]  = useState({
-    "026": [ // 廖菀淇 Teresa
-      {year:2026,month:5,day:6,startTime:"",endTime:""},
-      {year:2026,month:5,day:9,startTime:"",endTime:""},
-    ],
-    "037": [ // 王建曄 Jason
-      {year:2026,month:5,day:5, startTime:"14:00",endTime:"21:00"},
-      {year:2026,month:5,day:10,startTime:"05:00",endTime:"21:00"},
-      {year:2026,month:5,day:12,startTime:"14:00",endTime:"21:00"},
-      {year:2026,month:5,day:14,startTime:"09:00",endTime:"21:00"},
-      {year:2026,month:5,day:16,startTime:"09:00",endTime:"21:00"},
-      {year:2026,month:5,day:23,startTime:"09:00",endTime:"21:00"},
-    ],
-  });
-  // submissions[empId][`${y}-${m}`] = { submitted:bool, history:[{ts,before:[days],after:[days]}] }
-  const [submissions,setSubmissions] = useState({
-    "007":{"2026-5":{submitted:true,history:[]}},
-    "038":{"2026-5":{submitted:true,history:[]}},
-    "034":{"2026-5":{submitted:true,history:[]}},
-    "029":{"2026-5":{submitted:true,history:[]}},
-    "023":{"2026-5":{submitted:true,history:[]}},
-    "026":{"2026-5":{submitted:true,history:[]}},
-    "037":{"2026-5":{submitted:true,history:[]}},
-  });
-  // extraLeaveReqs: [{id, empId, year, month, day, reason, status:'pending'|'approved'|'rejected', ts}]
-  const [extraLeaveReqs,setExtraLeaveReqs] = useState([]);
+  const [vY,setVY] = useState(2026);
+  const [vM,setVM] = useState(5);
 
-  // skillAssessments[empId] = { counter:{date,result}, bar_flavor:{date,result}, bar_pour:{date,result} }
-  // result: null | 'scheduled' | 'pass' | 'fail'
-  const [skillAssess,setSkillAssess] = useState({});
+  const [sched,setSched]   = useFbState("app","sched", {});
+  const [mustOff,setMustOff]   = useFbState("app","mustOff", {});
+  const [partAvail,setPA]       = useFbState("app","partAvail", {});
+  const [submissions,setSubmissions] = useFbState("app","submissions", {});
+  const [extraLeaveReqs,setExtraLeaveReqs] = useFbState("app","extraLeaveReqs", []);
+  const [skillAssess,setSkillAssess]       = useFbState("app","skillAssess", {});
+  const [monthlyReviews,setMonthlyReviews] = useFbState("app","monthlyReviews", {});
+  const [overtimeReqs,setOvertimeReqs]     = useFbState("app","overtimeReqs", []);
+  const [staffPasswords,setStaffPasswords] = useFbState("app","staffPasswords", {});
+  const [evtDaysRaw,setEvtDaysRaw]         = useFbState("app","evtDays", {jiufen:[],huashan:[],xinguang:[],hq:[]});
+  // Convert evtDays arrays back to Sets for internal use
+  const evtDays = useMemo(()=>({
+    jiufen:   new Set(evtDaysRaw.jiufen   ||[]),
+    huashan:  new Set(evtDaysRaw.huashan  ||[]),
+    xinguang: new Set(evtDaysRaw.xinguang ||[]),
+    hq:       new Set(evtDaysRaw.hq       ||[]),
+  }), [evtDaysRaw]);
+  const setEvtDays = useCallback(updater => {
+    setEvtDaysRaw(prev => {
+      const prevSets = {
+        jiufen:   new Set(prev.jiufen   ||[]),
+        huashan:  new Set(prev.huashan  ||[]),
+        xinguang: new Set(prev.xinguang ||[]),
+        hq:       new Set(prev.hq       ||[]),
+      };
+      const next = typeof updater === 'function' ? updater(prevSets) : updater;
+      return {
+        jiufen:   [...(next.jiufen   instanceof Set ? next.jiufen   : new Set(next.jiufen   ||[]))],
+        huashan:  [...(next.huashan  instanceof Set ? next.huashan  : new Set(next.huashan  ||[]))],
+        xinguang: [...(next.xinguang instanceof Set ? next.xinguang : new Set(next.xinguang ||[]))],
+        hq:       [...(next.hq       instanceof Set ? next.hq       : new Set(next.hq       ||[]))],
+      };
+    });
+  }, [setEvtDaysRaw]);
 
-  // monthlyReviews[empId][`${y}-${m}`] = { scores:{managerUsername:{service,hygiene,tidiness,flavor,latte_art}}, notes:{managerUsername:{improve,bonus}} }
-  const [monthlyReviews,setMonthlyReviews] = useState({});
-
-  // overtimeReqs: [{id, empId, year, month, day, hours, reason, status:'pending'|'approved'|'rejected', ts}]
-  const [overtimeReqs,setOvertimeReqs] = useState([]);
-
-  // staffPasswords[empId] = password (self-set by employees on first login)
-  const [staffPasswords,setStaffPasswords] = useState({});
-  // eventDays[storeKey] = Set of `${y}-${m}-${d}`
-  const [evtDays,setEvtDays] = useState({jiufen:new Set(),huashan:new Set(),xinguang:new Set(),hq:new Set()});
+  const allLoaded = fbReady;
+  if (!allLoaded) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontSize:18,color:"#1a1a2e",fontWeight:700}}>⏳ 載入中...</div>;
 
   const dim = getDIM(vY,vM);
   const hols = getTwHolidays(vY,vM);
