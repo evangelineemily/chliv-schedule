@@ -6,10 +6,9 @@
   <title>門市排班系統</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Firebase -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -24,7 +23,12 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react">
+<script type="text/babel" data-presets="react" data-plugins="transform-react-jsx">
+Babel.registerPreset('myPreset', {
+  presets: [[Babel.availablePresets['react'], {runtime: 'classic'}]]
+});
+</script>
+<script type="text/babel" data-presets="myPreset">
 const { useState, useMemo, useEffect, useCallback } = React;
 
 
@@ -152,9 +156,7 @@ const senMo   = jd => {
 
 // ── GOOGLE SHEET SYNC ──────────────────────────────────────
 const GAS_URL = "https://script.google.com/macros/s/AKfycbwWPLsRknUwDv8giY-E_oJPU1pLgDPTktvQzuwwsaS6Egw3wEUOzOD6kYoNI-HM_r74/exec";
-function syncToSheet(type,payload){
-  fetch(GAS_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"application/json"},body:JSON.stringify({type,payload})}).catch(()=>{});
-}
+function syncToSheet(type,payload){fetch(GAS_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"application/json"},body:JSON.stringify({type,payload})}).catch(()=>{});}
 function syncLeaveReq(req,emps){const emp=emps.find(e=>e.id===req.empId);syncToSheet("leaveRequest",{...req,empName:emp?emp.name:req.empId});}
 function syncOvertimeReq(req,emps){const emp=emps.find(e=>e.id===req.empId);syncToSheet("overtimeRequest",{...req,empName:emp?emp.name:req.empId});}
 function syncEmployee(emp){syncToSheet("employee",emp);}
@@ -162,12 +164,12 @@ function syncScheduleDay(store,year,month,day,slots,emps){syncToSheet("schedule"
 function syncSkillAssess(empId,emps,assessData){const emp=emps.find(e=>e.id===empId);const items=Object.entries(assessData).map(([skill,v])=>({skill,date:v.date,result:v.result}));syncToSheet("skillAssess",{empId,empName:emp?emp.name:empId,items});}
 function syncMonthlyReview(empId,year,month,reviewer,scores,notes,emps){const emp=emps.find(e=>e.id===empId);syncToSheet("monthlyReview",{empId,empName:emp?emp.name:empId,year,month,reviewer,scores,notes});}
 
-// ── FIREBASE HELPERS ──────────────────────────────────────
+// ── FIREBASE STATE HOOK ──────────────────────────────────────
 const {useState,useEffect,useMemo,useCallback,useRef}=React;
 function useFbState(docId,defaultVal){
   const [val,setValRaw]=useState(defaultVal);
   useEffect(()=>{
-    if(!window.__fbListen){return;}
+    if(!window.__fbListen)return;
     const unsub=window.__fbListen("app",docId,data=>{
       if(data&&data.v!==undefined){try{setValRaw(JSON.parse(data.v));}catch(e){}}
     });
@@ -177,23 +179,23 @@ function useFbState(docId,defaultVal){
     setValRaw(prev=>{
       const next=typeof updater==="function"?updater(prev):updater;
       if(window.__fbSet){
-        let serializable=next;
-        if(next&&typeof next==="object"&&!Array.isArray(next)){
-          serializable=Object.fromEntries(Object.entries(next).map(([k,v])=>[k,v instanceof Set?[...v]:v]));
-        }
-        window.__fbSet("app",docId,{v:JSON.stringify(serializable)});
+        let s=next;
+        if(next&&typeof next==="object"&&!Array.isArray(next))
+          s=Object.fromEntries(Object.entries(next).map(([k,v])=>[k,v instanceof Set?[...v]:v]));
+        window.__fbSet("app",docId,{v:JSON.stringify(s)});
       }
       return next;
     });
   },[docId]);
   return [val,setVal];
 }
+
 const INIT_EMPS = [
   // id, name, eng, type, role(barista/staff), certified, stores[], fixedHQ, active, joinDate, seniority, annualLeft, annualExpiry, sickUsed, personalUsed
   {id:"001",name:"林子軒", eng:"Chris",  type:"正職",role:"barista",certified:true, stores:["hq","jiufen","huashan","xinguang"],primaryStores:[],fixedHQ:true, active:true, joinDate:"2019/08/01",seniority:"6年10月",annualLeft:0, annualExpiry:"—",lastLeaveGrant:null,    sickUsed:0,personalUsed:0},
   {id:"003",name:"陳思穎", eng:"Emily",  type:"正職",role:"barista",certified:true, stores:["hq","jiufen","huashan","xinguang"],primaryStores:[],fixedHQ:true, active:true, joinDate:"2019/08/01",seniority:"6年10月",annualLeft:0, annualExpiry:"113/10",lastLeaveGrant:null,sickUsed:0,personalUsed:0},
   {id:"007",name:"姜睿涵", eng:"Jessie", type:"正職",role:"barista",certified:true, stores:["jiufen","huashan","xinguang","hq"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2021/04/01",seniority:"5年2月", annualLeft:6, annualExpiry:"116/6",lastLeaveGrant:null, sickUsed:0,personalUsed:0},
-  {id:"016",name:"林承學", eng:"Louis",  type:"正職",role:"barista",certified:true, stores:["xinguang","jiufen"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2022/12/01",seniority:"3年6月", annualLeft:10,annualExpiry:"116/12",lastLeaveGrant:null,sickUsed:0,personalUsed:0},
+  {id:"016",name:"林承學", eng:"Louie",  type:"正職",role:"barista",certified:true, stores:["xinguang","jiufen"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2022/12/01",seniority:"3年6月", annualLeft:10,annualExpiry:"116/12",lastLeaveGrant:null,sickUsed:0,personalUsed:0},
   {id:"020",name:"林姿螢", eng:"Evita",  type:"正職",role:"barista",certified:true, stores:["huashan"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2023/03/01",seniority:"3年4月", annualLeft:13,annualExpiry:"116/3",lastLeaveGrant:null, sickUsed:0,personalUsed:0},
   {id:"023",name:"朱紫綺", eng:"Wendy",  type:"正職",role:"barista",certified:true, stores:["xinguang","huashan","jiufen"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2023/06/01",seniority:"3年1月", annualLeft:0, annualExpiry:"116/6",lastLeaveGrant:null, sickUsed:0,personalUsed:0},
   {id:"027",name:"林芷誼", eng:"Lisa",   type:"兼職",role:"staff",  certified:false,stores:["huashan","hq"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2024/10/01",seniority:"1年8月", annualLeft:0, annualExpiry:"—",lastLeaveGrant:null,    sickUsed:0,personalUsed:0},
@@ -204,7 +206,7 @@ const INIT_EMPS = [
   // Part-timers
   {id:"015",name:"吳書妤", eng:"Sumi",   type:"兼職",role:"staff",  certified:true, stores:["huashan","xinguang"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2022/05/01",seniority:"4年1月", annualLeft:0, annualExpiry:"—",lastLeaveGrant:null,    sickUsed:0,personalUsed:0},
   {id:"025",name:"張瑜珊", eng:"Eike",   type:"兼職",role:"staff",  certified:false,stores:["jiufen","huashan"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2023/08/09",seniority:"2年10月",annualLeft:0, annualExpiry:"—",lastLeaveGrant:null,    sickUsed:0,personalUsed:0},
-  {id:"035",name:"呂育昕", eng:"Louis-B",type:"兼職",role:"staff",  certified:false,stores:["huashan","hq"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2025/11/01",seniority:"0年7月", annualLeft:0, annualExpiry:"—",lastLeaveGrant:null,    sickUsed:0,personalUsed:0},
+  {id:"035",name:"呂育昕", eng:"Louis",type:"兼職",role:"staff",  certified:false,stores:["huashan","hq"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2025/11/01",seniority:"0年7月", annualLeft:0, annualExpiry:"—",lastLeaveGrant:null,    sickUsed:0,personalUsed:0},
   {id:"036",name:"古美婷", eng:"Kelly",  type:"兼職",role:"staff",  certified:false,stores:["hq","xinguang"],primaryStores:[],fixedHQ:true, active:true, joinDate:"2025/11/01",seniority:"0年7月", annualLeft:0, annualExpiry:"—",lastLeaveGrant:null,    sickUsed:0,personalUsed:0},
   {id:"037",name:"王建曄", eng:"Jason",  type:"兼職",role:"staff",  certified:false,stores:["xinguang","huashan"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2025/11/01",seniority:"0年7月", annualLeft:0, annualExpiry:"—",lastLeaveGrant:null,    sickUsed:0,personalUsed:0},
   {id:"026",name:"廖菀淇", eng:"Teresa", type:"兼職",role:"staff",  certified:false,stores:["jiufen","huashan","xinguang"],primaryStores:[],fixedHQ:false,active:true, joinDate:"2024/03/01",seniority:"2年3月", annualLeft:0, annualExpiry:"—",lastLeaveGrant:null,    sickUsed:0,personalUsed:0},
@@ -221,7 +223,7 @@ function App() {
     window.addEventListener("fb-ready",h);
     return ()=>window.removeEventListener("fb-ready",h);
   },[]);
-  const [emps,setEmps]   = useFbState("emps", INIT_EMPS);
+  const [emps,setEmps]   = useFbState("emps",INIT_EMPS);
   const now = useMemo(()=>new Date(),[]);
 
   // Auto-grant annual leave on work anniversaries (Taiwan Labor Standards Act).
@@ -253,9 +255,9 @@ function App() {
 
   // schedule[storeKey][`${y}-${m}-${d}`] = [{empId,position,shift,leave}]
   const [sched,setSched]   = useFbState("sched",{});
-  const [mustOff,setMustOff] = useFbState("mustOff",{});
-  const [partAvail,setPA] = useFbState("partAvail",{});
-  const [submissions,setSubmissions] = useFbState("submissions",{});
+  const [mustOff,setMustOff]=useFbState("mustOff",{});
+  const [partAvail,setPA]=useFbState("partAvail",{});
+  const [submissions,setSubmissions]=useFbState("submissions",{});
   // extraLeaveReqs: [{id, empId, year, month, day, reason, status:'pending'|'approved'|'rejected', ts}]
   const [extraLeaveReqs,setExtraLeaveReqs] = useFbState("extraLeaveReqs",[]);
 
@@ -272,29 +274,15 @@ function App() {
   // staffPasswords[empId] = password (self-set by employees on first login)
   const [staffPasswords,setStaffPasswords] = useFbState("staffPasswords",{});
   // eventDays[storeKey] = Set of `${y}-${m}-${d}`
-  const [evtDaysRaw,setEvtDaysRaw] = useFbState("evtDays",{jiufen:[],huashan:[],xinguang:[],hq:[]});
-  const evtDays = useMemo(()=>({
-    jiufen:  new Set(evtDaysRaw.jiufen  ||[]),
-    huashan: new Set(evtDaysRaw.huashan ||[]),
-    xinguang:new Set(evtDaysRaw.xinguang||[]),
-    hq:      new Set(evtDaysRaw.hq      ||[]),
-  }),[evtDaysRaw]);
-  const setEvtDays = useCallback(updater=>{
-    setEvtDaysRaw(prev=>{
-      const prevSets={jiufen:new Set(prev.jiufen||[]),huashan:new Set(prev.huashan||[]),xinguang:new Set(prev.xinguang||[]),hq:new Set(prev.hq||[])};
-      const next=typeof updater==="function"?updater(prevSets):updater;
-      return {jiufen:[...(next.jiufen instanceof Set?next.jiufen:new Set(next.jiufen||[]))],huashan:[...(next.huashan instanceof Set?next.huashan:new Set(next.huashan||[]))],xinguang:[...(next.xinguang instanceof Set?next.xinguang:new Set(next.xinguang||[]))],hq:[...(next.hq instanceof Set?next.hq:new Set(next.hq||[]))]};
-    });
-  },[setEvtDaysRaw]);
+  const [evtDaysRaw,setEvtDaysRaw]=useFbState("evtDays",{jiufen:[],huashan:[],xinguang:[],hq:[]});
+  const evtDays=useMemo(()=>({jiufen:new Set(evtDaysRaw.jiufen||[]),huashan:new Set(evtDaysRaw.huashan||[]),xinguang:new Set(evtDaysRaw.xinguang||[]),hq:new Set(evtDaysRaw.hq||[])}),[evtDaysRaw]);
+  const setEvtDays=useCallback(updater=>{setEvtDaysRaw(prev=>{const ps={jiufen:new Set(prev.jiufen||[]),huashan:new Set(prev.huashan||[]),xinguang:new Set(prev.xinguang||[]),hq:new Set(prev.hq||[])};const next=typeof updater==="function"?updater(ps):updater;return {jiufen:[...(next.jiufen instanceof Set?next.jiufen:new Set(next.jiufen||[]))],huashan:[...(next.huashan instanceof Set?next.huashan:new Set(next.huashan||[]))],xinguang:[...(next.xinguang instanceof Set?next.xinguang:new Set(next.xinguang||[]))],hq:[...(next.hq instanceof Set?next.hq:new Set(next.hq||[]))]};});},[setEvtDaysRaw]);
 
   const dim = getDIM(vY,vM);
   const hols = getTwHolidays(vY,vM);
   const dk = (y,m,d) => `${y}-${m}-${d}`;
   const getSD = (sk,day) => (sched[sk]||{})[dk(vY,vM,day)]||[];
-  const setSD = (sk,day,slots) => {
-    setSched(p=>({...p,[sk]:{...(p[sk]||{}),[dk(vY,vM,day)]:slots}}));
-    syncScheduleDay(sk,vY,vM,day,slots,emps);
-  };
+  const setSD=(sk,day,slots)=>{setSched(p=>({...p,[sk]:{...(p[sk]||{}),[dk(vY,vM,day)]:slots}}));syncScheduleDay(sk,vY,vM,day,slots,emps);};
   const getEmp = id => emps.find(e=>e.id===id);
   const today=now.getDate();
   // TEMP: fill-window restriction disabled for testing. Restore with:
@@ -647,251 +635,222 @@ function AutoSched({emps,vY,vM,dim,hols,sched,setSched,mustOff,partAvail,evtDays
   const [shortages,setShortages]=useState([]);
 
   const run=()=>{
-    const ns=JSON.parse(JSON.stringify(sched));
-    const logs=[]; // internal only, not shown to staff
+    const ns={}; STORE_KEYS.forEach(sk=>{ ns[sk]={}; });
+    const logs=[];
     const active=emps.filter(e=>e.active);
 
-    // Calculate workdays for this month
-    let workDays=0;
+    // ── 基本日曆資料 ────────────────────────────────────────
     const allDays=[];
     for(let d=1;d<=dim;d++){
       const wk=isWknd(vY,vM,d), isH=hols.includes(d);
-      allDays.push({d,wk,isH,isOff:wk||isH});
-      if(!wk&&!isH) workDays++;
+      allDays.push({d,wk,isH});
     }
+    // 應休配額 = 該月紅字天數（週末+國定假日的「數量」，只是配額不是固定休假日）
+    const restQuota=allDays.filter(x=>x.wk||x.isH).length;
+    const maxWorkDays=dim-restQuota;
 
-    // Track how many days each employee has been assigned this month
-    // to enforce fair rotation (target: workDays per month for full-time)
-    const assignCount={};
-    active.forEach(e=>assignCount[e.id]=0);
+    const ftEmps=active.filter(e=>e.type==='正職'&&!e.fixedHQ);
+    const ptEmps=active.filter(e=>e.type==='兼職'&&!e.fixedHQ);
+    const ftFixed=active.filter(e=>e.fixedHQ&&e.type==='正職');
+    const ptFixed=active.filter(e=>e.fixedHQ&&e.type==='兼職');
 
-    // --- Labor-law work day cap ---
-    // 正職每月最多工作天數 = 該月總天數 - 法定休假天數（週末＋國定假日）
-    // 必休 = 員工從法定休假天數中選哪幾天休，不是額外休假
-    // 系統追蹤每人已排天數，達到上限就不再派給他
-    // 兼職沒填可上班日 = 該月不排班（已在canWork處理）
-    const restQuota = allDays.filter(x=>x.isOff).length; // 法定休假天數
-    const maxWorkDays = dim - restQuota; // 每位正職最多工作天數
-    const weekdays = allDays.filter(x=>!x.isOff).map(x=>x.d);
-
-    // Count demand per weekday for spread-out rest day assignment
-    const offDemand={};
-    weekdays.forEach(d=>offDemand[d]=0);
-    Object.values(mustOff).forEach(arr=>arr.forEach(o=>{
-      if(o.year===vY&&o.month===vM&&!isWknd(vY,vM,o.day)&&!hols.includes(o.day)){
-        if(offDemand[o.day]!==undefined) offDemand[o.day]++;
-      }
-    }));
-
-    // isRestingDay: true if employee has reached their work day cap
-    // (handled dynamically via assignCount during scheduling)
-    // Also returns true for mustOff days (already handled in allOffIds)
-    const isRestingDay=(empId,day)=>{
-      // Check if employee has reached max work days for this month
-      if((assignCount[empId]||0) >= maxWorkDays) return true;
-      return false;
-    };
-
-    // autoRest for display summary only (computed after scheduling)
-    const autoRest={};
-
-    // Track which employees already assigned on each day (for conflict check)
-    // assignedOnDay[day] = Set of empIds
-    const assignedOnDay={};
-    for(let d=1;d<=dim;d++) assignedOnDay[d]=new Set();
-
-    STORE_KEYS.forEach(sk=>{
-      if(!ns[sk]) ns[sk]={};
+    // ── 必休資料（含時間戳，先填先得）────────────────────────
+    // mustOffSet[empId] = [{day, ts}]
+    const mustOffData={};
+    ftEmps.forEach(e=>{
+      const mo=(mustOff[e.id]||[]).filter(o=>o.year===vY&&o.month===vM).map(o=>({day:o.day,ts:o.ts||0}));
+      const ex=extraLeaveReqs.filter(r=>r.empId===e.id&&r.year===vY&&r.month===vM&&r.status==='approved').map(r=>({day:r.day,ts:0}));
+      mustOffData[e.id]=[...mo,...ex];
     });
 
-    // First pass: assign HQ fixed staff
-    // - Full-time fixedHQ (e.g. 林子軒/陳思穎): assigned every weekday automatically
-    // - Part-time fixedHQ (e.g. Kelly/古美婷): only assigned on days they marked
-    //   as available, using their submitted time range (same as other part-timers)
-    const hqFixedFT=active.filter(e=>e.fixedHQ&&e.stores.includes("hq")&&e.type==="正職");
-    const hqFixedPT=active.filter(e=>e.fixedHQ&&e.stores.includes("hq")&&e.type==="兼職");
+    // 多人同天必休 → 先填的人（ts最小）才算必休，後填的照常排班
+    // 建立：哪些人的必休被採納
+    const confirmedMustOff={}; // empId -> Set<day>
+    ftEmps.forEach(e=>{ confirmedMustOff[e.id]=new Set(); });
+
+    // 按天處理衝突
     for(let d=1;d<=dim;d++){
-      const {wk,isH}=allDays[d-1];
-      const k=dk(vY,vM,d);
-      const hqClosed=evtDays["hq"].has(`${vY}-${vM}-${d}::closed`);
-      if(isH||hqClosed){
-        // Holiday or marked closed: don't assign anyone to HQ
-        ns["hq"][k]=[];
-        continue;
-      }
-      const offIds=Object.values(mustOff).flatMap(arr=>arr.filter(o=>o.year===vY&&o.month===vM&&o.day===d).map(o=>o.empId));
-      const extraOffIds=extraLeaveReqs.filter(r=>r.year===vY&&r.month===vM&&r.day===d&&r.status==="approved").map(r=>r.empId);
-      const allOffIds=[...offIds,...extraOffIds];
-      const slots=[];
-      hqFixedFT.forEach(e=>{
-        if(!allOffIds.includes(e.id)){
-          slots.push({empId:e.id,position:"counter",shift:"全班",leave:null});
-          assignedOnDay[d].add(e.id);
-          assignCount[e.id]=(assignCount[e.id]||0)+1;
-        }
+      const requests=[]; // {empId, ts}
+      ftEmps.forEach(e=>{
+        const r=mustOffData[e.id]?.find(x=>x.day===d);
+        if(r) requests.push({empId:e.id,ts:r.ts});
       });
-      hqFixedPT.forEach(e=>{
-        const avail=(partAvail[e.id]||[]).find(a=>a.year===vY&&a.month===vM&&a.day===d);
-        if(avail&&!allOffIds.includes(e.id)){
-          slots.push({empId:e.id,position:"counter",shift:"全班",leave:null,startTime:avail.startTime||"",endTime:avail.endTime||""});
-          assignedOnDay[d].add(e.id);
-          assignCount[e.id]=(assignCount[e.id]||0)+1;
-        }
-      });
-      ns["hq"][k]=slots;
+      if(requests.length===0) continue;
+      // 先填的優先（ts最小）；多人時只讓先填的休，後填的不採納
+      requests.sort((a,b)=>a.ts-b.ts);
+      // 只允許第一位（或允許全部？依你說的「先填先休」）
+      // 先採納最先填的1人必休，其他人視為可上班
+      confirmedMustOff[requests[0].empId].add(d);
     }
 
-    // Second pass: assign other stores
-    const otherStores=STORE_KEYS.filter(sk=>sk!=="hq");
+    // ── Track assignment ─────────────────────────────────────
+    const assignCount={};
+    const assignedOn={};
+    active.forEach(e=>assignCount[e.id]=0);
+    for(let d=1;d<=dim;d++) assignedOn[d]=new Set();
+
+    const getAllOff=d=>{
+      const s=new Set();
+      // 只採納已確認的必休
+      ftEmps.forEach(e=>{ if(confirmedMustOff[e.id]?.has(d)) s.add(e.id); });
+      extraLeaveReqs.filter(r=>r.year===vY&&r.month===vM&&r.day===d&&r.status==='approved').forEach(r=>s.add(r.empId));
+      return s;
+    };
+
+    // ── PASS 1: HQ固定人員 ──────────────────────────────────
+    for(let d=1;d<=dim;d++){
+      const k=dk(vY,vM,d);
+      if(evtDays['hq'].has(`${vY}-${vM}-${d}::closed`)){ ns['hq'][k]=[]; continue; }
+      const allOff=getAllOff(d);
+      const slots=[];
+      ftFixed.forEach(e=>{
+        if(!allOff.has(e.id)){
+          slots.push({empId:e.id,position:'counter',shift:'全班',leave:null});
+          assignedOn[d].add(e.id); assignCount[e.id]++;
+        }
+      });
+      ptFixed.forEach(e=>{
+        const av=(partAvail[e.id]||[]).find(a=>a.year===vY&&a.month===vM&&a.day===d);
+        if(av&&!allOff.has(e.id)){
+          slots.push({empId:e.id,position:'counter',shift:'全班',leave:null,startTime:av.startTime||'',endTime:av.endTime||''});
+          assignedOn[d].add(e.id); assignCount[e.id]++;
+        }
+      });
+      ns['hq'][k]=slots;
+    }
+
+    // ── PASS 2: 其他門市（每天都可以排班，包含週末/國定假日）──
+    const otherStores=STORE_KEYS.filter(sk=>sk!=='hq');
 
     for(let d=1;d<=dim;d++){
       const {wk,isH}=allDays[d-1];
       const k=dk(vY,vM,d);
-      const offIds=Object.values(mustOff).flatMap(arr=>arr.filter(o=>o.year===vY&&o.month===vM&&o.day===d).map(o=>o.empId));
-      const extraOffIds=extraLeaveReqs.filter(r=>r.year===vY&&r.month===vM&&r.day===d&&r.status==="approved").map(r=>r.empId);
-      const allOffIds=[...offIds,...extraOffIds];
-      const paIds=Object.entries(partAvail).filter(([,arr])=>arr.some(a=>a.year===vY&&a.month===vM&&a.day===d)).map(([id])=>id);
+      const allOff=getAllOff(d);
+      const paToday=new Set(
+        Object.entries(partAvail)
+          .filter(([,arr])=>arr.some(a=>a.year===vY&&a.month===vM&&a.day===d))
+          .map(([id])=>id)
+      );
 
       for(const sk of otherStores){
         const isE=evtDays[sk].has(`${vY}-${vM}-${d}::event`);
         const isClosed=evtDays[sk].has(`${vY}-${vM}-${d}::closed`);
-        const need3=wk||isE;
-        const k=dk(vY,vM,d);
+        if(isClosed){ ns[sk][k]=[]; continue; }
 
-        if(isClosed){
-          ns[sk][k]=[];
-          continue;
-        }
-
-        if(isH){
-          // National holiday: only full-time, prefer junior, no part-timers
-          const eligible=active.filter(e=>{
-            if(e.type!=="正職"||e.fixedHQ) return false;
-            if(!e.stores.includes(sk)) return false;
-            if(allOffIds.includes(e.id)) return false;
-            if(assignedOnDay[d].has(e.id)) return false;
-            return true;
-          }).sort((a,b)=>senMo(a.joinDate)-senMo(b.joinDate)); // junior first
-
-          if(!eligible.length){
-            logs.push({t:"warn",m:`${pad(d)}日 ${STORES[sk].name} 國定假日無可用正職`});
-            ns[sk][k]=[];
-            continue;
-          }
-          const bars=eligible.filter(e=>e.role==="barista");
-          const oth=eligible.filter(e=>e.role!=="barista");
-          const slots=[];
-          if(bars.length){
-            slots.push({empId:bars[0].id,position:"barista",shift:"全班",leave:null});
-            assignedOnDay[d].add(bars[0].id); assignCount[bars[0].id]++;
-            if(oth.length){
-              slots.push({empId:oth[0].id,position:"counter",shift:"全班",leave:null});
-              assignedOnDay[d].add(oth[0].id); assignCount[oth[0].id]++;
-            }
-          } else {
-            logs.push({t:"error",m:`${pad(d)}日 ${STORES[sk].name} 國定假日缺吧台手`});
-          }
-          ns[sk][k]=slots;
-          continue;
-        }
-
-        // Regular day
         const canWork=e=>{
           if(!e.active||e.fixedHQ) return false;
           if(!e.stores.includes(sk)) return false;
-          if(allOffIds.includes(e.id)) return false;
-          if(assignedOnDay[d].has(e.id)) return false;
-          if(e.type==="正職"&&isRestingDay(e.id,d)) return false; // labor-law auto rest day
-          if(e.type==="兼職"&&!paIds.includes(e.id)) return false;
+          if(allOff.has(e.id)) return false;
+          if(assignedOn[d].has(e.id)) return false;
+          if(e.type==='兼職'&&!paToday.has(e.id)) return false;
           return true;
         };
 
-        // Sort: primary-store managers first, then part-timers (to avoid FT overtime), then by least assigned
-        const sortAvail=list=>list.sort((a,b)=>{
-          const aPrimary=(a.primaryStores||[]).includes(sk)?1:0;
-          const bPrimary=(b.primaryStores||[]).includes(sk)?1:0;
-          if(aPrimary!==bPrimary) return bPrimary-aPrimary; // primary employees first
-          if(a.type!==b.type) return a.type==="兼職"?-1:1;
+        const sort=list=>[...list].sort((a,b)=>{
+          const ap=(a.primaryStores||[]).includes(sk)?0:1;
+          const bp=(b.primaryStores||[]).includes(sk)?0:1;
+          if(ap!==bp) return ap-bp;
           return (assignCount[a.id]||0)-(assignCount[b.id]||0);
         });
 
-        let avail=sortAvail(active.filter(canWork));
-        let bars=avail.filter(e=>e.role==="barista");
-        let oth =avail.filter(e=>e.role!=="barista");
+        const ptAvail=sort(ptEmps.filter(canWork));
+        const ftAvail=sort(ftEmps.filter(canWork));
+        const pool=[...ptAvail,...ftAvail];
+        const slots=[];
+        const used=new Set();
 
-        if(!bars.length){
-          // Fallback: if no barista available because of must-off requests,
-          // override the most-recently-submitted must-off request (lowest priority)
-          // for a barista at this store, so the store can still be staffed.
-          // Approved special leave (extraOffIds) is never overridden.
-          const offBaristas=active.filter(e=>{
-            if(!e.active||e.fixedHQ||e.role!=="barista") return false;
-            if(!e.stores.includes(sk)) return false;
-            if(assignedOnDay[d].has(e.id)) return false;
-            if(e.type==="兼職"&&!paIds.includes(e.id)) return false;
-            return allOffIds.includes(e.id) && !extraOffIds.includes(e.id);
-          });
-          if(offBaristas.length){
-            const withTs=offBaristas.map(e=>{
-              const rec=(mustOff[e.id]||[]).find(o=>o.year===vY&&o.month===vM&&o.day===d);
-              return {e,ts:rec?.ts||0};
-            }).sort((a,b)=>b.ts-a.ts); // latest submission = lowest priority = gets overridden
-            const chosen=withTs[0].e;
-            bars=[chosen];
-            avail=sortAvail([chosen,...avail]);
-            oth=avail.filter(e=>e.role!=="barista");
+        // 1. 吧台手（只選一位）
+        const bar=pool.find(e=>e.role==='barista');
+        if(!bar){
+          logs.push({t:'error',m:`${pad(d)}日 ${STORES[sk].name} 無可用吧台手`});
+          ns[sk][k]=[]; continue;
+        }
+        slots.push({empId:bar.id,position:'barista',shift:'全班',leave:null});
+        assignedOn[d].add(bar.id); assignCount[bar.id]++; used.add(bar.id);
+
+        // 2. 櫃台（只選一位，非吧台手優先）
+        const rem=pool.filter(e=>!used.has(e.id));
+        const cnt=rem.find(e=>e.role!=='barista')||rem[0];
+        if(cnt){
+          slots.push({empId:cnt.id,position:'counter',shift:'全班',leave:null});
+          assignedOn[d].add(cnt.id); assignCount[cnt.id]++; used.add(cnt.id);
+        } else {
+          logs.push({t:'warn',m:`${pad(d)}日 ${STORES[sk].name} 缺櫃台`});
+        }
+
+        // 3. 第三人（有多餘人力且為假日/活動日才加）
+        if(wk||isH||isE){
+          const extra=pool.find(e=>!used.has(e.id));
+          if(extra){
+            slots.push({empId:extra.id,position:'sub_bar',shift:'全班',leave:null});
+            assignedOn[d].add(extra.id); assignCount[extra.id]++; used.add(extra.id);
           }
         }
 
-        if(!bars.length){
-          logs.push({t:"error",m:`${pad(d)}日 ${STORES[sk].name} 無可用吧台手`});
-          ns[sk][k]=[];
-          continue;
-        }
-
-        const slots=[];
-        const bar=bars[0];
-        slots.push({empId:bar.id,position:"barista",shift:sk==="xinguang"?"早班":"全班",leave:null});
-        assignedOnDay[d].add(bar.id); assignCount[bar.id]++;
-
-        if(need3){
-          const sub=oth.find(e=>e.certified&&!assignedOnDay[d].has(e.id));
-          if(sub){
-            slots.push({empId:sub.id,position:"sub_bar",shift:"全班",leave:null});
-            assignedOnDay[d].add(sub.id); assignCount[sub.id]++;
-          } else logs.push({t:"warn",m:`${pad(d)}日 ${STORES[sk].name} ${isE?"活動":"假"}日缺副吧`});
-          const cnt=oth.find(e=>e.id!==sub?.id&&!assignedOnDay[d].has(e.id));
-          if(cnt){
-            slots.push({empId:cnt.id,position:"counter",shift:"全班",leave:null});
-            assignedOnDay[d].add(cnt.id); assignCount[cnt.id]++;
-          } else logs.push({t:"warn",m:`${pad(d)}日 ${STORES[sk].name} 缺櫃台`});
-        } else {
-          const cnt=oth.find(e=>!assignedOnDay[d].has(e.id));
-          if(cnt){
-            slots.push({empId:cnt.id,position:"counter",shift:"全班",leave:null});
-            assignedOnDay[d].add(cnt.id); assignCount[cnt.id]++;
-          } else logs.push({t:"warn",m:`${pad(d)}日 ${STORES[sk].name} 缺櫃台`});
-        }
         ns[sk][k]=slots;
       }
     }
 
-    // Summary
-    active.forEach(e=>{
-      const cnt=assignCount[e.id]||0;
-      if(e.type==="正職"&&!e.fixedHQ&&cnt<workDays-5)
-        logs.push({t:"info",m:`${e.name} 本月僅排 ${cnt} 天（目標約 ${workDays} 天）`});
+    // ── PASS 3: 補足休假天數 ─────────────────────────────────
+    // 每位正職確認已工作天數，不足應休天數的，從需求最少的天補休
+    // dayDemand[d] = 那天有幾間門市需要人力
+    const dayDemand={};
+    for(let d=1;d<=dim;d++){
+      const k=dk(vY,vM,d);
+      let demand=0;
+      otherStores.forEach(sk=>{
+        if(!evtDays[sk]?.has(`${vY}-${vM}-${d}::closed`)) demand++;
+      });
+      dayDemand[d]=demand;
+    }
+
+    ftEmps.forEach(e=>{
+      const worked=assignCount[e.id]||0;
+      const restNeeded=dim-maxWorkDays; // = restQuota
+      const currentRest=dim-worked;
+      if(currentRest>=restNeeded) return; // 已休足，不需補
+
+      const needMore=restNeeded-currentRest;
+      // 找出目前被排班的天，從需求最少的天中移除排班
+      const workedDays=[];
+      for(let d=1;d<=dim;d++){
+        // 找出這天這個人被排在哪間門市
+        for(const sk of otherStores){
+          const k=dk(vY,vM,d);
+          const slots=ns[sk][k]||[];
+          if(slots.some(s=>s.empId===e.id)){
+            workedDays.push({d,sk,demand:dayDemand[d]});
+          }
+        }
+      }
+      // 按需求少的天優先移除（盡量連續）
+      workedDays.sort((a,b)=>a.demand-b.demand);
+      let removed=0;
+      for(const {d,sk} of workedDays){
+        if(removed>=needMore) break;
+        const k=dk(vY,vM,d);
+        const slots=ns[sk][k]||[];
+        const remaining=slots.filter(s=>s.empId!==e.id);
+        // 確保移除後該店仍有吧台手
+        const stillHasBar=remaining.some(s=>s.position==='barista');
+        const wasBar=slots.find(s=>s.empId===e.id)?.position==='barista';
+        if(wasBar&&!stillHasBar) continue; // 移除會導致缺吧台手，跳過
+        ns[sk][k]=remaining;
+        assignCount[e.id]--;
+        removed++;
+      }
     });
 
-    // --- Minimum staffing validation ---
+    // ── PASS 4: 人力缺口檢查 ────────────────────────────────
     const shortageList=[];
     for(let d=1;d<=dim;d++){
-      const {wk,isH}=allDays[d-1];
+      const {wk}=allDays[d-1];
       const k=dk(vY,vM,d);
       for(const sk of STORE_KEYS){
         const isClosed=evtDays[sk]?.has(`${vY}-${vM}-${d}::closed`);
-        if(isH||isClosed) continue; // holiday/closed: no minimum requirement
-        const req=STAFFING_REQS[sk][wk?"weekend":"weekday"];
+        if(isClosed) continue;
+        const {isH}=allDays[d-1];
+        const req=STAFFING_REQS[sk][(wk||isH)?'weekend':'weekday'];
         const slots=ns[sk][k]||[];
         const counts={barista:0,sub_bar:0,counter:0};
         slots.forEach(s=>{ if(counts[s.position]!==undefined) counts[s.position]++; });
@@ -899,31 +858,21 @@ function AutoSched({emps,vY,vM,dim,hols,sched,setSched,mustOff,partAvail,evtDays
         Object.entries(req).forEach(([pos,min])=>{
           if(counts[pos]<min) missing.push(`${POS_LBL[pos]}缺${min-counts[pos]}`);
         });
-        if(missing.length){
-          shortageList.push({day:d, store:sk, wk, missing});
-        }
+        if(missing.length) shortageList.push({day:d,store:sk,wk,missing});
       }
     }
 
-    // Compute rest summary after scheduling
-    active.filter(e=>e.type==="正職"&&!e.fixedHQ).forEach(e=>{
-      const workedDays=assignCount[e.id]||0;
-      const restDays=dim-workedDays;
-      const myMustOff=(mustOff[e.id]||[]).filter(o=>o.year===vY&&o.month===vM).map(o=>o.day);
-      autoRest[e.id]={workedDays, restDays, mustOffCount:myMustOff.length};
-    });
-
-    const restSum=active.filter(e=>e.type==="正職"&&!e.fixedHQ).map(e=>{
-      const myOffDays=(mustOff[e.id]||[]).filter(o=>o.year===vY&&o.month===vM).map(o=>o.day);
+    // ── PASS 5: 統計 ─────────────────────────────────────────
+    const restSum=ftEmps.map(e=>{
       const worked=assignCount[e.id]||0;
       const rest=dim-worked;
-      return {name:e.name, submitted:myOffDays.length, worked, rest, quota:restQuota, maxWork:maxWorkDays};
+      const myMustOff=(mustOff[e.id]||[]).filter(o=>o.year===vY&&o.month===vM).length;
+      return {name:e.name,submitted:myMustOff,worked,rest,quota:restQuota,maxWork:maxWorkDays};
     });
 
-    if(logs.length) console.log("排班備註:", logs); // internal debug only
+    if(logs.length) console.log('排班備註:',logs);
     setSched(ns); setLog(logs); setRestSummary(restSum); setShortages(shortageList); setDone(true);
   };
-
   const dk=(y,m,d)=>`${y}-${m}-${d}`;
 
   return(
@@ -1606,13 +1555,19 @@ function HRPage({emps,setEmps}){
           <div style={{marginBottom:12}}>
             <div style={{fontWeight:600,fontSize:13,marginBottom:8,color:"#2980b9"}}>🏪 可排門市設定</div>
             <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:16}}>
-              {STORE_KEYS.map(k=>(
-                <button key={k} type="button"
-                  onClick={()=>setEmps(es=>es.map(e=>e.id===editEmp.id?{...e,stores:e.stores.includes(k)?e.stores.filter(x=>x!==k):[...e.stores,k]}:e))}
-                  style={{background:editEmp.stores.includes(k)?STORES[k].color:"#f0f0f0",color:editEmp.stores.includes(k)?"#fff":"#555",border:"none",borderRadius:6,padding:"5px 13px",cursor:"pointer",fontWeight:600}}>
-                  {STORES[k].name}
-                </button>
-              ))}
+              {STORE_KEYS.map(k=>{
+                const has=editEmp.stores.includes(k);
+                const toggle=()=>{
+                  const newStores=has?editEmp.stores.filter(x=>x!==k):[...editEmp.stores,k];
+                  setEditEmp(em=>({...em,stores:newStores}));
+                };
+                return(
+                  <button key={k} type="button" onClick={toggle}
+                    style={{background:has?STORES[k].color:"#f0f0f0",color:has?"#fff":"#555",border:"none",borderRadius:6,padding:"5px 13px",cursor:"pointer",fontWeight:600}}>
+                    {STORES[k].name}
+                  </button>
+                );
+              })}
             </div>
           </div>
           <div style={{fontWeight:600,fontSize:13,marginBottom:8,color:"#e67e22"}}>📋 假別管理</div>
