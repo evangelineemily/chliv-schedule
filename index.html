@@ -6,11 +6,8 @@
   <title>門市排班系統</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <style>* { margin:0; padding:0; box-sizing:border-box; } body { font-family:'Noto Sans TC',sans-serif; }</style>
-  <!-- Firebase -->
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -21,10 +18,11 @@
     window.__fbReady  = true;
     window.dispatchEvent(new Event("fb-ready"));
   </script>
+  <style>* { margin:0; padding:0; box-sizing:border-box; } body { font-family:'Noto Sans TC',sans-serif; }</style>
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel">
+<script>
 const { useState, useMemo, useEffect, useCallback } = React;
 // ── ACCOUNTS ─────────────────────────────────────────────
 const ACCOUNTS = {
@@ -197,25 +195,182 @@ const STAFFING_REQS = {
 };
 
 // ── TAIWAN HOLIDAYS ──────────────────────────────────────
+// 資料來源：
+//  2025~2027：行政院人事行政總處正式公告之政府行政機關辦公日曆表
+//  2028~2032：行政院人事行政總處尚未正式公告，採民間網站（calendar.talllkai.com）依現行
+//             《紀念日及節日實施條例》規則預排版本（含農曆換算與補假規則）
+//  2033~2040：尚無任何官方或民間公告，由系統依現行條例規則程式推算（農曆換算
+//             +補假規則），可能與正式公告有1~2天誤差，正式公告後請更新
+// 月份索引為 0-based（0=1月...11=12月），日期含國定假日本身及補假日
+// ⚠️ 政府每年6月底前會公告次年行事曆，建議每年7月更新一次本表
 function getTwHolidays(year, month) {
   const h = {
     2025: {
-      0: [1],
-      1: [28, 29, 30, 31],
-      2: [3, 4],
-      3: [4, 5],
-      4: [1],
-      5: [7],
-      9: [10]
+      0: [1, 27], // 元旦、農曆除夕前彈性放假
+      1: [28, 29, 30, 31], // 228連假（含小年夜彈性放假）
+      2: [3, 4], // 兒童節、清明節補假
+      3: [4, 5], // 兒童節、清明節
+      4: [1, 2], // 勞動節
+      5: [7], // 端午節
+      8: [29], // 中秋節
+      9: [6, 10] // 國慶日及補假
     },
     2026: {
-      0: [1],
-      1: [16, 17, 18, 19, 20],
-      2: [3, 4],
-      3: [5, 6],
-      4: [1],
-      5: [19],
-      9: [10]
+      0: [1], // 元旦
+      1: [14, 15, 16, 17, 18, 19, 20, 27], // 小年夜~初三、補假、228補假(2/27)
+      3: [3, 4, 5, 6], // 兒童節清明節含補假
+      4: [1], // 勞動節
+      5: [19], // 端午節
+      8: [25, 28], // 中秋節、教師節
+      9: [10, 25], // 國慶日、光復節
+      11: [25] // 行憲紀念日
+    },
+    // ↓↓↓ 已正式公告 ↓↓↓
+    2027: {
+      0: [1, 2, 3], // 元旦連假
+      1: [4, 5, 6, 7, 8, 9, 10, 27, 28], // 春節(2/4小年夜~2/10含補假)、228連假(2/27~28)
+      3: [3, 4, 5, 6], // 兒童節、清明節（含補假）
+      4: [30], // 勞動節補假
+      5: [1, 2], // 勞動節
+      6: [9], // 端午節
+      8: [15, 28], // 中秋節、教師節
+      9: [9, 10, 11, 23, 24, 25], // 國慶連假、光復節連假
+      11: [24, 25, 26] // 行憲紀念日連假
+    },
+    // ↓↓↓ 以下為民間網站依規則預排版本，僅供參考 ↓↓↓
+    2028: {
+      0: [22, 24, 25, 26, 27, 28, 29, 30], // 春節（小年夜1/24~初四1/29，含補假）
+      1: [26, 27, 28], // 228連假
+      3: [1, 2, 3, 4], // 兒童節、清明節
+      4: [1], // 勞動節
+      5: [27, 28, 29], // 端午節連假
+      8: [25, 27, 28, 29], // 教師節連假
+      9: [3, 10, 25], // 中秋節、國慶日、光復節
+      11: [23, 24, 25] // 行憲紀念日連假
+    },
+    2029: {
+      0: [1], // 元旦
+      1: [10, 11, 12, 13, 14, 15, 16, 17, 18, 28], // 春節（小年夜2/11~初四2/16，含補假）
+      3: [3, 4], // 兒童節、清明節
+      4: [1], // 勞動節
+      5: [15, 16, 17], // 端午節連假
+      8: [21, 22, 23, 28, 29, 30], // 中秋節連假、教師節連假
+      9: [10], // 國慶日
+      10: [25], // 光復節
+      11: [25] // 行憲紀念日
+    },
+    2030: {
+      0: [1], // 元旦
+      1: [1, 2, 3, 4, 5, 6, 7, 28], // 春節（小年夜2/1~初三2/5，含補假）
+      3: [4, 5, 6, 7], // 兒童節、清明節
+      4: [1], // 勞動節
+      5: [5], // 端午節
+      8: [12, 27, 28, 29], // 中秋節、教師節連假
+      9: [10], // 國慶日
+      10: [25, 26, 27], // 光復節連假
+      11: [25] // 行憲紀念日
+    },
+    2031: {
+      0: [1], // 元旦
+      1: [21, 22, 23, 24, 25, 26, 28], // 春節（小年夜1/21~初三1/25，含補假）、和平紀念日(2/28)
+      2: [1, 2], // 228連假延伸
+      3: [3, 4, 5, 6], // 兒童節、清明節連假
+      4: [1], // 勞動節
+      5: [24], // 端午節
+      8: [27, 28, 29], // 教師節連假
+      9: [1, 10, 11, 12, 24, 25, 26], // 中秋節、國慶連假、光復節連假
+      11: [25] // 行憲紀念日
+    },
+    2032: {
+      0: [1], // 元旦
+      1: [7, 8, 9, 10, 11, 12, 13, 14, 15, 27, 28], // 春節（小年夜2/9~初四2/14，含補假）、和平紀念日連假
+      2: [29], // 和平紀念日連假延伸
+      3: [2, 3, 4, 5], // 兒童節、清明節連假
+      4: [30], // 勞動節補假
+      5: [1, 2, 11, 12, 13], // 勞動節、端午節連假
+      8: [18, 19, 20, 28], // 中秋節連假、教師節
+      9: [10, 23, 24, 25], // 國慶日、光復節連假
+      11: [24, 25, 26, 31] // 行憲紀念日連假（含12/31跨年元旦補假）
+    },
+    // ↓↓↓ 以下為系統依現行規則程式推算，僅供參考，正式公告後請更新 ↓↓↓
+    2033: {
+      0: [1, 28, 29, 30, 31], // 元旦、小年夜、除夕、初一
+      1: [1, 2, 28], // 初二、初三、228
+      3: [4, 5], // 兒童節、清明節
+      4: [1, 2], // 勞動節、補假
+      5: [1], // 端午節
+      8: [8, 28], // 中秋節、教師節
+      9: [10, 25], // 國慶日、光復節
+      11: [25, 26] // 行憲紀念日、補假
+    },
+    2034: {
+      0: [1, 2], // 元旦、補假
+      1: [17, 18, 19, 20, 21, 28], // 小年夜~初三（含補假）、228
+      3: [4, 5], // 兒童節、清明節
+      4: [1], // 勞動節
+      5: [20], // 端午節
+      8: [27, 28], // 中秋節、教師節
+      9: [10, 25], // 國慶日、光復節
+      11: [25] // 行憲紀念日
+    },
+    2035: {
+      0: [1], // 元旦
+      1: [6, 7, 8, 9, 10, 28], // 小年夜~初三（含補假）、228
+      3: [4, 5], // 兒童節、清明節
+      4: [1], // 勞動節
+      5: [10, 11], // 端午節、補假
+      8: [16, 17, 28], // 中秋節、補假、教師節
+      9: [10, 25], // 國慶日、光復節
+      11: [25] // 行憲紀念日
+    },
+    2036: {
+      0: [1, 25, 26, 27, 28, 29, 30], // 元旦、小年夜~初三（含補假）
+      1: [28], // 228
+      3: [4, 5], // 兒童節、清明節補假
+      4: [1, 30], // 勞動節、補假
+      8: [28, 29], // 教師節、補假
+      9: [3, 4, 10, 24, 25], // 中秋補假、中秋節、國慶日、光復節補假、光復節
+      11: [25] // 行憲紀念日
+    },
+    2037: {
+      0: [1], // 元旦
+      1: [13, 14, 15, 16, 17, 27, 28], // 小年夜~初三（含補假）、228補假
+      3: [3, 4, 5, 6], // 兒童節（含補假）、清明節、補假
+      4: [1], // 勞動節
+      5: [18], // 端午節
+      8: [24, 28], // 中秋節、教師節
+      9: [9, 10, 25, 26], // 國慶補假、國慶日、光復節、補假
+      11: [25] // 行憲紀念日
+    },
+    2038: {
+      0: [1], // 元旦
+      1: [2, 3, 4, 5, 6, 28], // 小年夜~初三（含補假）、228
+      2: [1], // 228補假延伸
+      3: [4, 5, 30], // 兒童節、清明節(含兒童節補假)、勞動節補假
+      4: [1], // 勞動節
+      5: [7], // 端午節
+      8: [13, 28], // 中秋節、教師節
+      9: [10, 11, 25], // 國慶日、補假、光復節
+      11: [24, 25, 31] // 行憲補假、行憲紀念日、跨年元旦補假
+    },
+    2039: {
+      0: [1, 21, 22, 23, 24, 25, 26], // 元旦、小年夜~初三（含補假）
+      1: [28], // 228
+      3: [4, 5], // 兒童節、清明節
+      4: [1, 2, 27], // 勞動節、補假、端午節
+      8: [28], // 教師節
+      9: [2, 3, 10, 25], // 中秋節、補假、國慶日、光復節
+      11: [25, 26] // 行憲紀念日、補假
+    },
+    2040: {
+      0: [1, 2], // 元旦、補假
+      1: [10, 11, 12, 13, 14, 28], // 小年夜~初三（含補假）、228
+      3: [4, 5], // 兒童節、清明節
+      4: [1], // 勞動節
+      5: [14], // 端午節
+      8: [20, 28], // 中秋節、教師節
+      9: [10, 25], // 國慶日、光復節
+      11: [25] // 行憲紀念日
     }
   };
   return (h[year] || {})[month] || [];
@@ -264,6 +419,12 @@ const GAS_URL = "https://script.google.com/macros/s/AKfycbwWPLsRknUwDv8giY-E_oJP
 function syncToSheet(type,payload){fetch(GAS_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"application/json"},body:JSON.stringify({type,payload})}).catch(()=>{});}
 function syncLeaveReq(req,emps){const emp=emps.find(e=>e.id===req.empId);syncToSheet("leaveRequest",{...req,empName:emp?emp.name:req.empId});}
 function syncOvertimeReq(req,emps){const emp=emps.find(e=>e.id===req.empId);syncToSheet("overtimeRequest",{...req,empName:emp?emp.name:req.empId});}
+function syncFullLeaveReq(req,emps){
+  const emp=emps.find(e=>e.id===req.empId);
+  (req.dates||[{year:req.year,month:req.month,day:req.day}]).forEach(d=>{
+    syncToSheet("leaveRequest",{id:req.id,empId:req.empId,empName:emp?emp.name:req.empId,year:d.year,month:d.month,day:d.day,leaveType:req.leaveType,sickType:req.sickType||"",reason:req.reason||"",status:req.status,ts:req.ts});
+  });
+}
 function syncEmployee(emp){syncToSheet("employee",emp);}
 function syncScheduleDay(store,year,month,day,slots,emps){syncToSheet("schedule",{store,year,month,day,slots:slots.map(s=>({...s,empName:(emps.find(e=>e.id===s.empId)||{}).name||s.empId}))});}
 
@@ -1252,12 +1413,13 @@ function Overview({
   // Work days this month
   let workDays = 0;
   for (let d = 1; d <= dim; d++) if (!isWknd(vY, vM, d) && !hols.includes(d)) workDays++;
+  const restDays = dim - workDays; // 應休天數 = 總天數 - 應上班天數
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
     style: PT
   }, "總覽"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
-      gridTemplateColumns: "repeat(4,1fr)",
+      gridTemplateColumns: "repeat(5,1fr)",
       gap: 12,
       marginBottom: 20
     }
@@ -1272,10 +1434,15 @@ function Overview({
     s: "人",
     c: "#e67e22"
   }, {
-    l: "本月工作天",
+    l: "本月應上班天數",
     v: workDays,
     s: "天",
     c: "#27ae60"
+  }, {
+    l: "本月應休天數",
+    v: restDays,
+    s: "天",
+    c: "#16a085"
   }, {
     l: "已排班",
     v: cov,
@@ -4949,6 +5116,7 @@ function MyLeave({ emps, user, leaveReqs, setLeaveReqs, sched, now }) {
       ts: Date.now()
     };
     setLeaveReqs(p => [...p, req]);
+    syncFullLeaveReq(req,[emp]);
     setForm({ leaveType: "annual", sickType: "outpatient", reason: "", dates: [] });
     setFormOk("申請已送出，等待店長審核。");
   };
@@ -5166,11 +5334,21 @@ function LeaveMgr({ emps, leaveReqs, setLeaveReqs, setSD, getSD, vY, vM, now }) 
         });
       }
     });
-    setLeaveReqs(p => p.map(r => r.id === id ? { ...r, status: "approved" } : r));
+    setLeaveReqs(p => p.map(r => {
+      if(r.id!==id) return r;
+      const u={...r,status:"approved"};
+      syncFullLeaveReq(u,emps);
+      return u;
+    }));
   };
 
   const reject = (id) => {
-    setLeaveReqs(p => p.map(r => r.id === id ? { ...r, status: "rejected", rejectReason } : r));
+    setLeaveReqs(p => p.map(r => {
+      if(r.id!==id) return r;
+      const u={...r,status:"rejected",rejectReason};
+      syncFullLeaveReq(u,emps);
+      return u;
+    }));
     setRejectModal(null);
     setRejectReason("");
   };
