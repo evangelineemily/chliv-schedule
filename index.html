@@ -429,7 +429,7 @@ function syncEmployee(emp){syncToSheet("employee",emp);}
 function syncScheduleDay(store,year,month,day,slots,emps){syncToSheet("schedule",{store,year,month,day,slots:slots.map(s=>({...s,empName:(emps.find(e=>e.id===s.empId)||{}).name||s.empId}))});}
 
 // ── FIREBASE STATE HOOK ──────────────────────────────────────
-const {useState,useEffect,useMemo,useCallback,useRef}=React;
+const { useRef } = React;
 function useFbState(docId,defaultVal){
   const [val,setValRaw]=useState(defaultVal);
   useEffect(()=>{
