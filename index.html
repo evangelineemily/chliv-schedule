@@ -3275,6 +3275,21 @@ function HRPage({
 }) {
   const [search, setSearch] = useState("");
   const [editEmp, setEditEmp] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const blank = {
+    id: "", name: "", eng: "", type: "正職", role: "staff", certified: false,
+    stores: [], primaryStores: [], fixedHQ: false, active: true,
+    joinDate: "", seniority: "", annualLeft: 0, annualExpiry: "—",
+    lastLeaveGrant: null, sickUsed: 0, personalUsed: 0
+  };
+  const [ne, setNe] = useState(blank);
+  const addEmp = () => {
+    if (!ne.id || !ne.name) return;
+    setEmps(e => [...e, ne]);
+    syncEmployee(ne);
+    setShowAdd(false);
+    setNe(blank);
+  };
   const fil = emps.filter(e => e.name.includes(search) || e.eng.toLowerCase().includes(search.toLowerCase()) || e.id.includes(search));
   const save = () => {
     setEmps(es => es.map(e => e.id === editEmp.id ? {
@@ -3302,7 +3317,19 @@ function HRPage({
       ...IS,
       maxWidth: 280
     }
-  })), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowAdd(true),
+    style: {
+      background: "#27ae60",
+      color: "#fff",
+      border: "none",
+      borderRadius: 6,
+      padding: "8px 16px",
+      cursor: "pointer",
+      fontWeight: 700,
+      marginLeft: 12
+    }
+  }, "+ 新增員工")), /*#__PURE__*/React.createElement("div", {
     style: CA
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3528,7 +3555,18 @@ function HRPage({
       color: "#aaa",
       fontSize: 13
     }
-  }, "無紀錄")))));
+  }, "無紀錄")))), showAdd && /*#__PURE__*/React.createElement(Modal, {
+    title: "新增員工",
+    onClose: () => setShowAdd(false)
+  }, /*#__PURE__*/React.createElement(EmpForm, {
+    emp: ne,
+    setEmp: setNe,
+    showStores: true
+  }), /*#__PURE__*/React.createElement(MBtns, {
+    onCancel: () => setShowAdd(false),
+    onSave: addEmp,
+    label: "新增"
+  })));
 }
 
 // ── MY SCHEDULE ──────────────────────────────────────────
