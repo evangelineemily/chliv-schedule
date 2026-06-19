@@ -2766,7 +2766,8 @@ function StaffMgr({
     onClose: () => setEditEmp(null)
   }, /*#__PURE__*/React.createElement(EmpForm, {
     emp: editEmp,
-    setEmp: setEditEmp
+    setEmp: setEditEmp,
+    showStores: true
   }), /*#__PURE__*/React.createElement(MBtns, {
     onCancel: () => setEditEmp(null),
     onSave: saveEdit
@@ -2775,7 +2776,8 @@ function StaffMgr({
     onClose: () => setShowAdd(false)
   }, /*#__PURE__*/React.createElement(EmpForm, {
     emp: ne,
-    setEmp: setNe
+    setEmp: setNe,
+    showStores: true
   }), /*#__PURE__*/React.createElement(MBtns, {
     onCancel: () => setShowAdd(false),
     onSave: addEmp,
