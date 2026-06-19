@@ -10,10 +10,11 @@
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
     const app = initializeApp({ apiKey:"AIzaSyCMI6HCjBynguXdws8NPUI8Doo0DSPRs8E", authDomain:"schedule-e92d3.firebaseapp.com", projectId:"schedule-e92d3" });
     const db = getFirestore(app);
     window.__fbSet    = (col,id,data) => setDoc(doc(db,col,id), data, {merge:true});
+    window.__fbGet    = async (col,id) => { const snap = await getDoc(doc(db,col,id)); return snap.exists() ? snap.data() : null; };
     window.__fbListen = (col,id,cb)   => onSnapshot(doc(db,col,id), snap => cb(snap.exists() ? snap.data() : null));
     window.__fbReady  = true;
     window.dispatchEvent(new Event("fb-ready"));
@@ -436,6 +437,7 @@ function useFbState(docId,defaultVal){
   const writingRef=useRef(false);
   const pendingRef=useRef(null);
   const loadedRef=useRef(false); // true once we've received the FIRST snapshot from Firestore (even if empty/null)
+  const latestRemoteRef=useRef(defaultVal); // always tracks the most recent value we know Firestore has
   useEffect(()=>{
     if(!window.__fbListen){ loadedRef.current=true; setLoaded(true); return; }
     const unsub=window.__fbListen("app",docId,data=>{
@@ -443,13 +445,19 @@ function useFbState(docId,defaultVal){
       // Firestore's local cache can echo back a pre-write snapshot, which
       // would otherwise clobber the optimistic local update.
       if(writingRef.current){ loadedRef.current=true; setLoaded(true); return; }
-      if(data&&data.v!==undefined){try{setValRaw(JSON.parse(data.v));}catch(e){}}
+      if(data&&data.v!==undefined){
+        try{
+          const parsed=JSON.parse(data.v);
+          latestRemoteRef.current=parsed;
+          setValRaw(parsed);
+        }catch(e){}
+      }
       loadedRef.current=true;
       setLoaded(true);
     });
     return unsub;
   },[docId]);
-  const setVal=useCallback(updater=>{
+  const setVal=useCallback(async updater=>{
     // Refuse to write to Firestore until we've confirmed at least once what's
     // actually stored there. Without this guard, a write that fires before
     // the first snapshot arrives would push the in-memory default value
@@ -458,20 +466,32 @@ function useFbState(docId,defaultVal){
       console.warn("[useFbState] Blocked write before initial load:", docId);
       return;
     }
-    setValRaw(prev=>{
-      const next=typeof updater==="function"?updater(prev):updater;
-      if(window.__fbSet){
-        let s=next;
-        if(next&&typeof next==="object"&&!Array.isArray(next))
-          s=Object.fromEntries(Object.entries(next).map(([k,v])=>[k,v instanceof Set?[...v]:v]));
-        writingRef.current=true;
-        clearTimeout(pendingRef.current);
-        const p=window.__fbSet("app",docId,{v:JSON.stringify(s)});
-        if(p&&p.then) p.then(()=>{ pendingRef.current=setTimeout(()=>{writingRef.current=false;},800); }).catch(()=>{writingRef.current=false;});
-        else pendingRef.current=setTimeout(()=>{writingRef.current=false;},800);
-      }
-      return next;
-    });
+    // Fetch the freshest value from Firestore right before writing. This
+    // closes a race where a browser tab with a stale in-memory copy (e.g.
+    // open for a while, or just hasn't received the latest snapshot yet)
+    // applies its update on top of OLD data and overwrites changes someone
+    // else just made. Falls back to latestRemoteRef (from the live listener)
+    // if the explicit fetch fails for any reason.
+    let base=latestRemoteRef.current;
+    if(window.__fbGet){
+      try{
+        const remote=await window.__fbGet("app",docId);
+        if(remote&&remote.v!==undefined){ base=JSON.parse(remote.v); }
+      }catch(e){}
+    }
+    const next=typeof updater==="function"?updater(base):updater;
+    latestRemoteRef.current=next;
+    setValRaw(next);
+    if(window.__fbSet){
+      let s=next;
+      if(next&&typeof next==="object"&&!Array.isArray(next))
+        s=Object.fromEntries(Object.entries(next).map(([k,v])=>[k,v instanceof Set?[...v]:v]));
+      writingRef.current=true;
+      clearTimeout(pendingRef.current);
+      const p=window.__fbSet("app",docId,{v:JSON.stringify(s)});
+      if(p&&p.then) p.then(()=>{ pendingRef.current=setTimeout(()=>{writingRef.current=false;},800); }).catch(()=>{writingRef.current=false;});
+      else pendingRef.current=setTimeout(()=>{writingRef.current=false;},800);
+    }
   },[docId]);
   return [val,setVal,loaded];
 }
