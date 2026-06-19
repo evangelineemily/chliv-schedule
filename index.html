@@ -432,9 +432,15 @@ function syncScheduleDay(store,year,month,day,slots,emps){syncToSheet("schedule"
 const { useRef } = React;
 function useFbState(docId,defaultVal){
   const [val,setValRaw]=useState(defaultVal);
+  const writingRef=useRef(false);
+  const pendingRef=useRef(null);
   useEffect(()=>{
     if(!window.__fbListen)return;
     const unsub=window.__fbListen("app",docId,data=>{
+      // Ignore snapshots that arrive while we have a local write in flight —
+      // Firestore's local cache can echo back a pre-write snapshot, which
+      // would otherwise clobber the optimistic local update.
+      if(writingRef.current) return;
       if(data&&data.v!==undefined){try{setValRaw(JSON.parse(data.v));}catch(e){}}
     });
     return unsub;
@@ -446,7 +452,11 @@ function useFbState(docId,defaultVal){
         let s=next;
         if(next&&typeof next==="object"&&!Array.isArray(next))
           s=Object.fromEntries(Object.entries(next).map(([k,v])=>[k,v instanceof Set?[...v]:v]));
-        window.__fbSet("app",docId,{v:JSON.stringify(s)});
+        writingRef.current=true;
+        clearTimeout(pendingRef.current);
+        const p=window.__fbSet("app",docId,{v:JSON.stringify(s)});
+        if(p&&p.then) p.then(()=>{ pendingRef.current=setTimeout(()=>{writingRef.current=false;},800); }).catch(()=>{writingRef.current=false;});
+        else pendingRef.current=setTimeout(()=>{writingRef.current=false;},800);
       }
       return next;
     });
