@@ -432,20 +432,32 @@ function syncScheduleDay(store,year,month,day,slots,emps){syncToSheet("schedule"
 const { useRef } = React;
 function useFbState(docId,defaultVal){
   const [val,setValRaw]=useState(defaultVal);
+  const [loaded,setLoaded]=useState(false);
   const writingRef=useRef(false);
   const pendingRef=useRef(null);
+  const loadedRef=useRef(false); // true once we've received the FIRST snapshot from Firestore (even if empty/null)
   useEffect(()=>{
-    if(!window.__fbListen)return;
+    if(!window.__fbListen){ loadedRef.current=true; setLoaded(true); return; }
     const unsub=window.__fbListen("app",docId,data=>{
       // Ignore snapshots that arrive while we have a local write in flight —
       // Firestore's local cache can echo back a pre-write snapshot, which
       // would otherwise clobber the optimistic local update.
-      if(writingRef.current) return;
+      if(writingRef.current){ loadedRef.current=true; setLoaded(true); return; }
       if(data&&data.v!==undefined){try{setValRaw(JSON.parse(data.v));}catch(e){}}
+      loadedRef.current=true;
+      setLoaded(true);
     });
     return unsub;
   },[docId]);
   const setVal=useCallback(updater=>{
+    // Refuse to write to Firestore until we've confirmed at least once what's
+    // actually stored there. Without this guard, a write that fires before
+    // the first snapshot arrives would push the in-memory default value
+    // (e.g. INIT_EMPS) and silently wipe out real cloud data.
+    if(!loadedRef.current){
+      console.warn("[useFbState] Blocked write before initial load:", docId);
+      return;
+    }
     setValRaw(prev=>{
       const next=typeof updater==="function"?updater(prev):updater;
       if(window.__fbSet){
@@ -461,7 +473,7 @@ function useFbState(docId,defaultVal){
       return next;
     });
   },[docId]);
-  return [val,setVal];
+  return [val,setVal,loaded];
 }
 
 const INIT_EMPS = [
@@ -787,7 +799,7 @@ function App() {
     window.addEventListener("fb-ready",h);
     return ()=>window.removeEventListener("fb-ready",h);
   },[]);
-  const [emps, setEmps] = useFbState("emps", INIT_EMPS);
+  const [emps, setEmps, empsLoaded] = useFbState("emps", INIT_EMPS);
   const now = useMemo(() => new Date(), []);
 
   // Auto-grant annual leave on work anniversaries (Taiwan Labor Standards Act).
@@ -796,6 +808,7 @@ function App() {
   // grant the entitlement for that anniversary year and advance the key.
   // annualExpiry is set to 1 year after that anniversary (ROC calendar).
   useEffect(() => {
+    if(!empsLoaded) return; // don't touch emps until we've loaded the real data from Firestore
     setEmps(prev => prev.map(e => {
       if (e.type !== "正職" || !e.joinDate || !e.active) return e;
       const last = lastAnniversary(e.joinDate, now);
@@ -813,7 +826,7 @@ function App() {
         lastLeaveGrant: lastKey
       };
     }));
-  }, [now]);
+  }, [now, empsLoaded]);
   const [vY, setVY] = useState(() => new Date().getFullYear());
   const [vM, setVM] = useState(() => new Date().getMonth()); // 0-indexed，自動讀取當月
 
@@ -862,7 +875,7 @@ function App() {
   const fillOpen = true,
     fillClosed = false,
     canFill = true;
-  if(!fbReady) return React.createElement('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontSize:18,color:'#1a1a2e',fontWeight:700}},'⏳ 載入中...');
+  if(!fbReady || !empsLoaded) return React.createElement('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontSize:18,color:'#1a1a2e',fontWeight:700}},'⏳ 載入中...');
   if (!user) return /*#__PURE__*/React.createElement(Login, {
     emps: emps,
     staffPasswords: staffPasswords,
