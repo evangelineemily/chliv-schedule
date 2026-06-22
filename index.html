@@ -1946,6 +1946,7 @@ function EventMark({
 function EditSched({
   emps,
   setEmps,
+  _upsertEmp,
   vY,
   vM,
   dim,
@@ -2634,7 +2635,8 @@ function ViewSched({
 // ── STAFF MANAGER ────────────────────────────────────────
 function StaffMgr({
   emps,
-  setEmps
+  setEmps,
+  _upsertEmp
 }) {
   const [editEmp, setEditEmp] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -3276,6 +3278,7 @@ function ExtraLeaveApproval({
   vM,
   extraLeaveReqs,
   setExtraLeaveReqs,
+  _upsertExtraLeave,
   getEmp
 }) {
   const monthReqs = extraLeaveReqs.filter(r => r.year === vY && r.month === vM);
@@ -3388,7 +3391,8 @@ function ExtraLeaveApproval({
 // ── HR PAGE ──────────────────────────────────────────────
 function HRPage({
   emps,
-  setEmps
+  setEmps,
+  _upsertEmp
 }) {
   const [search, setSearch] = useState("");
   const [editEmp, setEditEmp] = useState(null);
@@ -4149,6 +4153,7 @@ function MyFill({
 // ── EXTRA LEAVE REQUEST (employee section) ──────────────
 function ExtraLeaveSection({
   emp,
+  _upsertExtraLeave,
   vY,
   vM,
   dim,
@@ -4316,6 +4321,7 @@ const REVIEW_DIMS = [{
 function AssessMgr({
   emps,
   setEmps,
+  _upsertEmp,
   vY,
   vM,
   skillAssess,
@@ -4847,7 +4853,8 @@ function MyOvertime({
   vM,
   dim,
   overtimeReqs,
-  setOvertimeReqs
+  setOvertimeReqs,
+  _upsertOT
 }) {
   const emp = emps.find(e => e.name === user.name);
   const [day, setDay] = useState("");
@@ -5006,6 +5013,7 @@ function MyOvertime({
 // ── HOURS MANAGEMENT (manager) ──────────────────────────
 function HoursMgr({
   emps,
+  _upsertOT,
   vY,
   vM,
   dim,
@@ -5202,7 +5210,7 @@ function HoursMgr({
 }
 
 // ── MY LEAVE (employee) ──────────────────────────────────
-function MyLeave({ emps, user, leaveReqs, setLeaveReqs, sched, now }) {
+function MyLeave({ emps, user, leaveReqs, setLeaveReqs, _upsertLeave, sched, now }) {
   const emp = emps.find(e => e.id === user.empId);
   const [tab, setTab] = useState("summary"); // summary | apply | history
   const [form, setForm] = useState({ leaveType: "annual", sickType: "outpatient", reason: "", dates: [] });
@@ -5460,7 +5468,7 @@ function MyLeave({ emps, user, leaveReqs, setLeaveReqs, sched, now }) {
 }
 
 // ── LEAVE MANAGER (manager) ──────────────────────────────
-function LeaveMgr({ emps, leaveReqs, setLeaveReqs, setSD, getSD, vY, vM, now }) {
+function LeaveMgr({ emps, leaveReqs, setLeaveReqs, _upsertLeave, setSD, getSD, vY, vM, now }) {
   const [tab, setTab] = useState("pending"); // pending | all
   const [rejectModal, setRejectModal] = useState(null); // {id}
   const [rejectReason, setRejectReason] = useState("");
