@@ -889,8 +889,8 @@ function App() {
     window.addEventListener("fb-ready",h);
     return ()=>window.removeEventListener("fb-ready",h);
   },[]);
-  const {items:emps, upsertItem:_addEmp, upsertItem:_updateEmp, updateMany:_updateEmpsMany, loaded:empsLoaded} = useColState("emps","id",INIT_EMPS);
-  const _upsertEmp = useCallback(emp=>{ _addEmp(emp); syncEmployee(emp); },[_addEmp]);
+  const {items:emps, upsertItem:_upsertEmpRaw, updateMany:_updateEmpsMany, loaded:empsLoaded} = useColState("emps","id",INIT_EMPS);
+  const _upsertEmp = useCallback(emp=>{ _upsertEmpRaw(emp); syncEmployee(emp); },[_upsertEmpRaw]);
   const setEmps = useCallback(updater=>{
     if(typeof updater==="function") _updateEmpsMany(updater);
     else _updateEmpsMany(()=>updater);
