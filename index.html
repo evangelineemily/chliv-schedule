@@ -455,7 +455,7 @@ const { useRef } = React;
 function useColState(col, idKey, initItems){
   const [items, setItemsRaw] = useState([]);
   const [loaded, setLoaded]  = useState(false);
-  const loadedRef  = useRef(false);
+  const loadedRef  = useRef(true); // default true so writes are never blocked
   const localRef   = useRef({}); // id -> item, tracks recent local writes
 
   useEffect(()=>{
@@ -475,6 +475,7 @@ function useColState(col, idKey, initItems){
         });
         setItemsRaw(initItems);
       }
+      // Always mark as loaded regardless of whether collection was empty or not
       loadedRef.current=true;
       setLoaded(true);
     });
