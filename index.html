@@ -499,11 +499,18 @@ function useEmps(initEmps){
         loadedRef.current=true;
         setLoaded(true);
       } else {
-        // Empty collection on first listen: seed from INIT_EMPS (first-run only)
+        // Empty collection on first listen: seed from initEmps (first-run only)
         if(!loadedRef.current){
           loadedRef.current=true;
           setLoaded(true);
-          // Don't auto-seed — let manager add employees manually
+          // Write INIT_EMPS to Firebase so they persist permanently
+          if(window.__fbSetEmp){
+            initEmps.forEach(emp=>{
+              localMapRef.current[emp.id]=emp;
+              window.__fbSetEmp(emp);
+            });
+          }
+          setEmpsRaw(initEmps);
         }
       }
     });
