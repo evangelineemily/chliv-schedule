@@ -13,17 +13,23 @@
     import { getFirestore, doc, collection, getDoc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
     const app = initializeApp({ apiKey:"AIzaSyCMI6HCjBynguXdws8NPUI8Doo0DSPRs8E", authDomain:"schedule-e92d3.firebaseapp.com", projectId:"schedule-e92d3" });
     const db = getFirestore(app);
-    // Generic single-doc helpers (used for sched, mustOff, partAvail, etc.)
-    window.__fbSet       = (col,id,data) => setDoc(doc(db,col,id), data, {merge:true});
-    window.__fbGet       = async (col,id) => { const s=await getDoc(doc(db,col,id)); return s.exists()?s.data():null; };
-    window.__fbListen    = (col,id,cb)   => onSnapshot(doc(db,col,id), snap=>cb(snap.exists()?snap.data():null));
-    // Per-employee helpers: each employee is a separate Firestore document in the "emps" collection
-    window.__fbSetEmp    = (emp) => setDoc(doc(db,"emps",String(emp.id)), emp);
-    window.__fbDelEmp    = (id)  => deleteDoc(doc(db,"emps",String(id)));
-    window.__fbListenEmps= (cb)  => onSnapshot(collection(db,"emps"), snap=>{
+
+    // ── Single-doc (generic) ──
+    window.__fbSet    = (col,id,data) => setDoc(doc(db,col,id), data, {merge:true});
+    window.__fbGet    = async(col,id) => { const s=await getDoc(doc(db,col,id)); return s.exists()?s.data():null; };
+    window.__fbListen = (col,id,cb)  => onSnapshot(doc(db,col,id), s=>cb(s.exists()?s.data():null));
+    window.__fbDel    = (col,id)     => deleteDoc(doc(db,col,id));
+
+    // ── Collection listeners (each item = separate Firestore doc) ──
+    window.__fbListenCol = (col,cb) => onSnapshot(collection(db,col), snap=>{
       const list=[]; snap.forEach(d=>list.push(d.data())); cb(list);
     });
-    window.__fbReady  = true;
+
+    // ── Per-collection set/del shortcuts ──
+    window.__fbSetInCol = (col,id,data) => setDoc(doc(db,col,String(id)), data);
+    window.__fbDelInCol = (col,id)      => deleteDoc(doc(db,col,String(id)));
+
+    window.__fbReady = true;
     window.dispatchEvent(new Event("fb-ready"));
   </script>
   <style>* { margin:0; padding:0; box-sizing:border-box; } body { font-family:'Noto Sans TC',sans-serif; }</style>
@@ -438,121 +444,127 @@ function syncScheduleDay(store,year,month,day,slots,emps){syncToSheet("schedule"
 
 // ── FIREBASE STATE HOOK ──────────────────────────────────────
 const { useRef } = React;
-// ── FIREBASE: single-doc state (for sched, mustOff, partAvail, etc.) ──
-// Safe: these are keyed by month/store, so concurrent writes to different keys are separate Firestore documents
-function useFbState(docId,defaultVal){
-  const [val,setValRaw]=useState(defaultVal);
-  const [loaded,setLoaded]=useState(false);
-  const loadedRef=useRef(false);
-  const writingRef=useRef(false);
-  const pendingRef=useRef(null);
-  useEffect(()=>{
-    if(!window.__fbListen){loadedRef.current=true;setLoaded(true);return;}
-    const unsub=window.__fbListen("app",docId,data=>{
-      if(writingRef.current){loadedRef.current=true;setLoaded(true);return;}
-      if(data&&data.v!==undefined){try{setValRaw(JSON.parse(data.v));}catch(e){}}
-      loadedRef.current=true;setLoaded(true);
-    });
-    return unsub;
-  },[docId]);
-  const setVal=useCallback(updater=>{
-    if(!loadedRef.current){console.warn("[useFbState] blocked pre-load write:",docId);return;}
-    setValRaw(prev=>{
-      const next=typeof updater==="function"?updater(prev):updater;
-      if(window.__fbSet){
-        let s=next;
-        if(next&&typeof next==="object"&&!Array.isArray(next))
-          s=Object.fromEntries(Object.entries(next).map(([k,v])=>[k,v instanceof Set?[...v]:v]));
-        writingRef.current=true;
-        clearTimeout(pendingRef.current);
-        const p=window.__fbSet("app",docId,{v:JSON.stringify(s)});
-        if(p&&p.then) p.then(()=>{pendingRef.current=setTimeout(()=>{writingRef.current=false;},500);}).catch(()=>{writingRef.current=false;});
-        else pendingRef.current=setTimeout(()=>{writingRef.current=false;},500);
-      }
-      return next;
-    });
-  },[docId]);
-  return [val,setVal,loaded];
-}
+// ══════════════════════════════════════════════════════════
+// FIREBASE HOOKS
+// ══════════════════════════════════════════════════════════
 
-// ── FIREBASE: per-employee state (each employee = separate Firestore document) ──
-// This eliminates the "stale tab overwrites whole array" problem: every write
-// touches exactly ONE employee document, so concurrent operations never conflict.
-function useEmps(initEmps){
-  const [emps,setEmpsRaw]=useState(initEmps);
-  const [loaded,setLoaded]=useState(false);
-  const loadedRef=useRef(false);
-  const localMapRef=useRef({}); // empId -> emp, tracks what WE last wrote
+// ── useColState: each item in the array is a SEPARATE Firestore doc ──
+// col       = Firestore collection name
+// idKey     = field name used as the document ID (e.g. "id", "reqId")
+// initItems = seed data written on first run (when collection is empty)
+function useColState(col, idKey, initItems){
+  const [items, setItemsRaw] = useState([]);
+  const [loaded, setLoaded]  = useState(false);
+  const loadedRef  = useRef(false);
+  const localRef   = useRef({}); // id -> item, tracks recent local writes
 
   useEffect(()=>{
-    if(!window.__fbListenEmps){loadedRef.current=true;setLoaded(true);return;}
-    const unsub=window.__fbListenEmps(list=>{
-      if(list.length>0||loadedRef.current){
-        // Merge: start with what Firestore says, then overlay any employee we
-        // recently wrote (prevents the "echo" race described earlier)
+    if(!window.__fbListenCol){ loadedRef.current=true; setLoaded(true); setItemsRaw(initItems||[]); return; }
+    const unsub = window.__fbListenCol(col, list=>{
+      if(list.length > 0){
+        // Merge remote list with any local writes not yet echoed back
         const remoteMap={};
-        list.forEach(e=>{remoteMap[e.id]=e;});
-        // Overlay local writes (in case our write hasn't propagated back yet)
-        Object.assign(remoteMap, localMapRef.current);
-        const merged=Object.values(remoteMap);
-        if(merged.length>0) setEmpsRaw(merged);
-        loadedRef.current=true;
-        setLoaded(true);
-      } else {
-        // Empty collection on first listen: seed from initEmps (first-run only)
-        if(!loadedRef.current){
-          loadedRef.current=true;
-          setLoaded(true);
-          // Write INIT_EMPS to Firebase so they persist permanently
-          if(window.__fbSetEmp){
-            initEmps.forEach(emp=>{
-              localMapRef.current[emp.id]=emp;
-              window.__fbSetEmp(emp);
-            });
-          }
-          setEmpsRaw(initEmps);
-        }
+        list.forEach(item=>{ remoteMap[item[idKey]]=item; });
+        Object.assign(remoteMap, localRef.current);
+        setItemsRaw(Object.values(remoteMap));
+      } else if(!loadedRef.current && initItems && initItems.length>0){
+        // Empty collection on first listen → seed with initItems
+        initItems.forEach(item=>{
+          localRef.current[item[idKey]]=item;
+          if(window.__fbSetInCol) window.__fbSetInCol(col, item[idKey], item);
+        });
+        setItemsRaw(initItems);
       }
+      loadedRef.current=true;
+      setLoaded(true);
     });
     return unsub;
-  },[]);
+  },[col]);
 
-  const addEmp=useCallback(emp=>{
-    if(!loadedRef.current)return;
-    localMapRef.current[emp.id]=emp;
-    setEmpsRaw(prev=>{
-      const exists=prev.find(e=>e.id===emp.id);
-      return exists?prev.map(e=>e.id===emp.id?emp:e):[...prev,emp];
+  // Upsert a single item (only touches that one Firestore doc)
+  const upsertItem = useCallback(item=>{
+    if(!loadedRef.current) return;
+    const id = item[idKey];
+    localRef.current[id] = item;
+    setItemsRaw(prev=>{
+      const exists = prev.find(x=>x[idKey]===id);
+      return exists ? prev.map(x=>x[idKey]===id?item:x) : [...prev, item];
     });
-    if(window.__fbSetEmp) window.__fbSetEmp(emp);
-  },[]);
+    if(window.__fbSetInCol) window.__fbSetInCol(col, id, item);
+  },[col, idKey]);
 
-  const updateEmp=useCallback(emp=>{
-    if(!loadedRef.current)return;
-    localMapRef.current[emp.id]=emp;
-    setEmpsRaw(prev=>prev.map(e=>e.id===emp.id?emp:e));
-    if(window.__fbSetEmp) window.__fbSetEmp(emp);
-  },[]);
+  // Remove a single item
+  const removeItem = useCallback(id=>{
+    if(!loadedRef.current) return;
+    delete localRef.current[id];
+    setItemsRaw(prev=>prev.filter(x=>x[idKey]!==id));
+    if(window.__fbDelInCol) window.__fbDelInCol(col, id);
+  },[col, idKey]);
 
-  const updateEmpsMany=useCallback(updater=>{
-    // For bulk updates (e.g. annual leave auto-grant): apply to each emp individually
-    if(!loadedRef.current)return;
-    setEmpsRaw(prev=>{
-      const next=updater(prev);
-      // Write only employees that actually changed
-      next.forEach((newEmp,i)=>{
-        const oldEmp=prev[i];
-        if(oldEmp&&JSON.stringify(newEmp)!==JSON.stringify(oldEmp)){
-          localMapRef.current[newEmp.id]=newEmp;
-          if(window.__fbSetEmp) window.__fbSetEmp(newEmp);
+  // Bulk updater (like setItems(prev=>prev.map(...))) — writes only changed items
+  const updateMany = useCallback(updater=>{
+    if(!loadedRef.current) return;
+    setItemsRaw(prev=>{
+      const next = typeof updater==="function" ? updater(prev) : updater;
+      next.forEach((newItem, i)=>{
+        const oldItem = prev.find(x=>x[idKey]===newItem[idKey]);
+        if(!oldItem || JSON.stringify(newItem)!==JSON.stringify(oldItem)){
+          localRef.current[newItem[idKey]]=newItem;
+          if(window.__fbSetInCol) window.__fbSetInCol(col, newItem[idKey], newItem);
         }
       });
       return next;
     });
-  },[]);
+  },[col, idKey]);
 
-  return {emps, addEmp, updateEmp, updateEmpsMany, empsLoaded:loaded};
+  return { items, upsertItem, removeItem, updateMany, loaded };
 }
+
+// ── useSingleDoc: one Firestore document stores one JSON value ──
+// Used for: sched (keyed by month), staffPasswords, evtDays
+// These are OK as single docs because they are keyed by month/store and
+// concurrent writes to different months/stores don't conflict.
+function useSingleDoc(docId, defaultVal){
+  const [val, setValRaw] = useState(defaultVal);
+  const [loaded, setLoaded] = useState(false);
+  const loadedRef  = useRef(false);
+  const writingRef = useRef(false);
+  const pendingRef = useRef(null);
+
+  useEffect(()=>{
+    if(!window.__fbListen){ loadedRef.current=true; setLoaded(true); return; }
+    const unsub = window.__fbListen("app", docId, data=>{
+      if(writingRef.current){ loadedRef.current=true; setLoaded(true); return; }
+      if(data && data.v !== undefined){ try{ setValRaw(JSON.parse(data.v)); }catch(e){} }
+      loadedRef.current=true;
+      setLoaded(true);
+    });
+    return unsub;
+  },[docId]);
+
+  const setVal = useCallback(updater=>{
+    if(!loadedRef.current) return;
+    setValRaw(prev=>{
+      const next = typeof updater==="function" ? updater(prev) : updater;
+      if(window.__fbSet){
+        let s = next;
+        if(next && typeof next==="object" && !Array.isArray(next))
+          s = Object.fromEntries(Object.entries(next).map(([k,v])=>[k,v instanceof Set?[...v]:v]));
+        writingRef.current = true;
+        clearTimeout(pendingRef.current);
+        const p = window.__fbSet("app", docId, {v: JSON.stringify(s)});
+        const done = ()=>{ pendingRef.current=setTimeout(()=>{ writingRef.current=false; },500); };
+        if(p&&p.then) p.then(done).catch(()=>{ writingRef.current=false; });
+        else done();
+      }
+      return next;
+    });
+  },[docId]);
+
+  return [val, setVal, loaded];
+}
+
+
 
 const INIT_EMPS = [
 // id, name, eng, type, role(barista/staff), certified, stores[], fixedHQ, active, joinDate, seniority, annualLeft, annualExpiry, sickUsed, personalUsed
@@ -877,8 +889,8 @@ function App() {
     window.addEventListener("fb-ready",h);
     return ()=>window.removeEventListener("fb-ready",h);
   },[]);
-  const {emps, addEmp:_addEmp, updateEmp:_updateEmp, updateEmpsMany:_updateEmpsMany, empsLoaded} = useEmps(INIT_EMPS);
-  // Provide a setEmps-compatible shim for bulk updater calls (排班存檔調年假等)
+  const {items:emps, upsertItem:_addEmp, upsertItem:_updateEmp, updateMany:_updateEmpsMany, loaded:empsLoaded} = useColState("emps","id",INIT_EMPS);
+  const _upsertEmp = useCallback(emp=>{ _addEmp(emp); syncEmployee(emp); },[_addEmp]);
   const setEmps = useCallback(updater=>{
     if(typeof updater==="function") _updateEmpsMany(updater);
     else _updateEmpsMany(()=>updater);
@@ -910,33 +922,58 @@ function App() {
   const [vM, setVM] = useState(() => new Date().getMonth()); // 0-indexed，自動讀取當月
 
   // schedule[storeKey][`${y}-${m}-${d}`] = [{empId,position,shift,leave}]
-  const [sched, setSched] = useFbState("sched",{});
+  const [sched, setSched] = useSingleDoc("sched",{});
   // mustOff[empId] = [{year,month,day,ts}]
-  const [mustOff,setMustOff]=useFbState("mustOff",{});
+  const {items:_mustOffList, upsertItem:_upsertMustOff, loaded:_mustOffLoaded} = useColState("mustOff","empId",[]);
+  // Convert list to map for backward compat: mustOff[empId] = [{year,month,day,ts}]
+  const mustOff = useMemo(()=>{ const m={}; _mustOffList.forEach(x=>{ m[x.empId]=x.days||[]; }); return m; },[_mustOffList]);
+  const setMustOff = useCallback(updater=>{
+    const next = typeof updater==="function" ? updater(mustOff) : updater;
+    Object.entries(next).forEach(([empId,days])=>{
+      _upsertMustOff({empId, days});
+    });
+  },[mustOff, _upsertMustOff]);
   // partAvail[empId] = [{year,month,day,startTime,endTime}]
-  const [partAvail,setPA]=useFbState("partAvail",{});
+  const {items:_paList, upsertItem:_upsertPA} = useColState("partAvail","empId",[]);
+  const partAvail = useMemo(()=>{ const m={}; _paList.forEach(x=>{ m[x.empId]=x.slots||[]; }); return m; },[_paList]);
+  const setPA = useCallback(updater=>{
+    const next = typeof updater==="function" ? updater(partAvail) : updater;
+    Object.entries(next).forEach(([empId,slots])=>{ _upsertPA({empId, slots}); });
+  },[partAvail, _upsertPA]);
   // submissions[empId][`${y}-${m}`] = { submitted:bool, history:[{ts,before:[days],after:[days]}] }
-  const [submissions,setSubmissions]=useFbState("submissions",{});
+  const [submissions,setSubmissions] = useSingleDoc("submissions",{});
   // extraLeaveReqs: [{id, empId, year, month, day, reason, status:'pending'|'approved'|'rejected', ts}]
-  const [extraLeaveReqs, setExtraLeaveReqs] = useFbState("extraLeaveReqs",[]);
+  const {items:extraLeaveReqs, upsertItem:_upsertExtraLeave} = useColState("extraLeaveReqs","id",[]);
+  const setExtraLeaveReqs = useCallback(updater=>{
+    const next = typeof updater==="function" ? updater(extraLeaveReqs) : updater;
+    next.forEach(req=>{ _upsertExtraLeave(req); });
+  },[extraLeaveReqs, _upsertExtraLeave]);
 
   // skillAssessments[empId] = { counter:{date,result}, flavor:{date,result}, barista:{date,result} }
   // result: null | 'scheduled' | 'pass' | 'fail'
-  const [skillAssess, setSkillAssess] = useFbState("skillAssess",{});
+  const [skillAssess, setSkillAssess] = useSingleDoc("skillAssess",{});
 
   // monthlyReviews[empId][`${y}-${m}`] = { scores:{managerUsername:{service,hygiene,tidiness,flavor,latte_art}}, notes:{managerUsername:{improve,bonus}} }
-  const [monthlyReviews, setMonthlyReviews] = useFbState("monthlyReviews",{});
+  const [monthlyReviews, setMonthlyReviews] = useSingleDoc("monthlyReviews",{});
 
   // overtimeReqs: [{id, empId, year, month, day, hours, reason, status:'pending'|'approved'|'rejected', ts}]
-  const [overtimeReqs, setOvertimeReqs] = useFbState("overtimeReqs",[]);
+  const {items:overtimeReqs, upsertItem:_upsertOT} = useColState("overtimeReqs","id",[]);
+  const setOvertimeReqs = useCallback(updater=>{
+    const next = typeof updater==="function" ? updater(overtimeReqs) : updater;
+    next.forEach(req=>{ _upsertOT(req); });
+  },[overtimeReqs, _upsertOT]);
 
   // leaveReqs: [{id, empId, dates:[{year,month,day}], leaveType:'annual'|'sick'|'personal', sickType:'outpatient'|'inpatient', reason, status:'pending'|'approved'|'rejected', rejectReason, ts}]
-  const [leaveReqs, setLeaveReqs] = useFbState("leaveReqs",[]);
+  const {items:leaveReqs, upsertItem:_upsertLeave} = useColState("leaveReqs","id",[]);
+  const setLeaveReqs = useCallback(updater=>{
+    const next = typeof updater==="function" ? updater(leaveReqs) : updater;
+    next.forEach(req=>{ _upsertLeave(req); });
+  },[leaveReqs, _upsertLeave]);
 
   // staffPasswords[empId] = password (self-set by employees on first login)
-  const [staffPasswords, setStaffPasswords] = useFbState("staffPasswords",{});
+  const [staffPasswords, setStaffPasswords] = useSingleDoc("staffPasswords",{});
   // eventDays[storeKey] = Set of `${y}-${m}-${d}`
-  const [evtDaysRaw,setEvtDaysRaw]=useFbState("evtDays",{jiufen:[],huashan:[],xinguang:[],hq:[]});
+  const [evtDaysRaw,setEvtDaysRaw]=useSingleDoc("evtDays",{jiufen:[],huashan:[],xinguang:[],hq:[]});
   const evtDays=useMemo(()=>({jiufen:new Set(evtDaysRaw.jiufen||[]),huashan:new Set(evtDaysRaw.huashan||[]),xinguang:new Set(evtDaysRaw.xinguang||[]),hq:new Set(evtDaysRaw.hq||[])}),[evtDaysRaw]);
   const setEvtDays=useCallback(updater=>{setEvtDaysRaw(prev=>{const ps={jiufen:new Set(prev.jiufen||[]),huashan:new Set(prev.huashan||[]),xinguang:new Set(prev.xinguang||[]),hq:new Set(prev.hq||[])};const next=typeof updater==="function"?updater(ps):updater;return {jiufen:[...(next.jiufen instanceof Set?next.jiufen:new Set(next.jiufen||[]))],huashan:[...(next.huashan instanceof Set?next.huashan:new Set(next.huashan||[]))],xinguang:[...(next.xinguang instanceof Set?next.xinguang:new Set(next.xinguang||[]))],hq:[...(next.hq instanceof Set?next.hq:new Set(next.hq||[]))]};});},[setEvtDaysRaw]);
   const dim = getDIM(vY, vM);
@@ -1017,7 +1054,7 @@ function App() {
   }];
   const nav = user.role === "manager" ? manNav : user.role === "hr" ? hrNav : stNav;
   const sp = {
-    _addEmp, _updateEmp, _updateEmpsMany,
+    _upsertEmp, _updateEmpsMany, _upsertExtraLeave, _upsertLeave, _upsertOT,
     emps,
     setEmps,
     vY,
@@ -1998,7 +2035,7 @@ function EditSched({
         let delta=0;
         if(newlyAdded.includes(e.id)) delta-=1;
         if(removed.includes(e.id)) delta+=1;
-        if(delta!==0) _updateEmp({...e,annualLeft:Math.max(0,(e.annualLeft||0)+delta)});
+        if(delta!==0) _upsertEmp({...e,annualLeft:Math.max(0,(e.annualLeft||0)+delta)});
       });
     }
     setSD(sel, ed, finalSlots);
@@ -2621,19 +2658,17 @@ function StaffMgr({
     personalUsed: 0
   };
   const [ne, setNe] = useState(blank);
-  const flipRole = id => { const e=emps.find(x=>x.id===id); if(e) _updateEmp({...e,role:e.role==="barista"?"staff":"barista"}); };
-  const flip = (id,f) => { const e=emps.find(x=>x.id===id); if(e) _updateEmp({...e,[f]:!e[f]}); };
-  const togStore = (id,k) => { const e=emps.find(x=>x.id===id); if(e) _updateEmp({...e,stores:e.stores.includes(k)?e.stores.filter(x=>x!==k):[...e.stores,k]}); };
-  const togPrimary = (id,k) => { const e=emps.find(x=>x.id===id); if(e) _updateEmp({...e,primaryStores:(e.primaryStores||[]).includes(k)?(e.primaryStores||[]).filter(x=>x!==k):[...(e.primaryStores||[]),k]}); };
+  const flipRole = id => { const e=emps.find(x=>x.id===id); if(e) _upsertEmp({...e,role:e.role==="barista"?"staff":"barista"}); };
+  const flip = (id,f) => { const e=emps.find(x=>x.id===id); if(e) _upsertEmp({...e,[f]:!e[f]}); };
+  const togStore = (id,k) => { const e=emps.find(x=>x.id===id); if(e) _upsertEmp({...e,stores:e.stores.includes(k)?e.stores.filter(x=>x!==k):[...e.stores,k]}); };
+  const togPrimary = (id,k) => { const e=emps.find(x=>x.id===id); if(e) _upsertEmp({...e,primaryStores:(e.primaryStores||[]).includes(k)?(e.primaryStores||[]).filter(x=>x!==k):[...(e.primaryStores||[]),k]}); };
   const saveEdit = () => {
-    _updateEmp(editEmp);
-    syncEmployee(editEmp);
+    _upsertEmp(editEmp);
     setEditEmp(null);
   };
   const addEmp = () => {
     if (!ne.id || !ne.name) return;
-    _addEmp(ne);
-    syncEmployee(ne);
+    _upsertEmp(ne);
     setShowAdd(false);
     setNe(blank);
   };
@@ -3245,7 +3280,7 @@ function ExtraLeaveApproval({
 }) {
   const monthReqs = extraLeaveReqs.filter(r => r.year === vY && r.month === vM);
   if (!monthReqs.length) return null;
-  const setStatus=(id,status)=>{setExtraLeaveReqs(p=>p.map(r=>{if(r.id!==id)return r;const u={...r,status};syncLeaveReq(u,emps);return u;}));};
+  const setStatus=(id,status)=>{ const r=extraLeaveReqs.find(x=>x.id===id); if(!r)return; const u={...r,status}; _upsertExtraLeave(u); syncLeaveReq(u,emps); };
   const statusLabel = {
     pending: "待審核",
     approved: "已核准",
@@ -3367,14 +3402,14 @@ function HRPage({
   const [ne, setNe] = useState(blank);
   const addEmp = () => {
     if (!ne.id || !ne.name) return;
-    _addEmp(ne);
-    syncEmployee(ne);
+    _upsertEmp(ne);
     setShowAdd(false);
     setNe(blank);
   };
   const fil = emps.filter(e => e.name.includes(search) || e.eng.toLowerCase().includes(search.toLowerCase()) || e.id.includes(search));
   const save = () => {
-    _updateEmp({...emps.find(e=>e.id===editEmp.id)||{}, stores:editEmp.stores, annualLeft:editEmp.annualLeft, annualExpiry:editEmp.annualExpiry, sickUsed:editEmp.sickUsed, personalUsed:editEmp.personalUsed});
+    const base = emps.find(e=>e.id===editEmp.id)||{};
+    _upsertEmp({...base, stores:editEmp.stores, annualLeft:editEmp.annualLeft, annualExpiry:editEmp.annualExpiry, sickUsed:editEmp.sickUsed, personalUsed:editEmp.personalUsed});
     setEditEmp(null);
   };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
@@ -4135,7 +4170,7 @@ function ExtraLeaveSection({
     }
     setWarn("");
     const newReq={id:`${emp.id}-${vY}-${vM}-${day}-${Date.now()}`,empId:emp.id,year:vY,month:vM,day:Number(day),leaveType:reason.trim(),reason:reason.trim(),status:"pending",ts:Date.now()};
-    setExtraLeaveReqs(p=>[...p,newReq]);
+    _upsertExtraLeave(newReq);
     syncLeaveReq(newReq,[emp]);
     setDay("");
     setReason("");
@@ -4321,7 +4356,7 @@ function AssessMgr({
           return s.key === stage ? result === "pass" : r === "pass";
         });
         if (allPass) {
-          {const _e=emps.find(e=>e.id===empId); if(_e) _updateEmp({..._e,
+          {const _e=emps.find(e=>e.id===empId); if(_e) _upsertEmp({..._e,
             ...e,
             role: "barista",
             certified: true
@@ -4849,7 +4884,7 @@ function MyOvertime({
     }
     setWarn("");
     const newOT={id:`${emp.id}-${vY}-${vM}-${day}-${Date.now()}`,empId:emp.id,year:vY,month:vM,day:Number(day),hours:Number(hours),reason:reason.trim(),status:"pending",ts:Date.now()};
-    setOvertimeReqs(p=>[...p,newOT]);
+    _upsertOT(newOT);
     syncOvertimeReq(newOT,[emp]);
     setDay("");
     setHours("");
@@ -4993,7 +5028,7 @@ function HoursMgr({
     approved: "#27ae60",
     rejected: "#e74c3c"
   };
-  const setStatus=(id,status)=>{setOvertimeReqs(p=>p.map(r=>{if(r.id!==id)return r;const u={...r,status};syncOvertimeReq(u,emps);return u;}));};
+  const setStatus=(id,status)=>{ const r=overtimeReqs.find(x=>x.id===id); if(!r)return; const u={...r,status}; _upsertOT(u); syncOvertimeReq(u,emps); };
 
   // Calculate part-timer total hours from schedule
   const partTimerHours = empId => {
@@ -5240,7 +5275,7 @@ function MyLeave({ emps, user, leaveReqs, setLeaveReqs, sched, now }) {
       rejectReason: "",
       ts: Date.now()
     };
-    setLeaveReqs(p => [...p, req]);
+    _upsertLeave(req);
     syncFullLeaveReq(req,[emp]);
     setForm({ leaveType: "annual", sickType: "outpatient", reason: "", dates: [] });
     setFormOk("申請已送出，等待店長審核。");
@@ -5459,21 +5494,11 @@ function LeaveMgr({ emps, leaveReqs, setLeaveReqs, setSD, getSD, vY, vM, now }) 
         });
       }
     });
-    setLeaveReqs(p => p.map(r => {
-      if(r.id!==id) return r;
-      const u={...r,status:"approved"};
-      syncFullLeaveReq(u,emps);
-      return u;
-    }));
+    const _r=leaveReqs.find(x=>x.id===id); if(_r){ const u={..._r,status:"approved"}; _upsertLeave(u); syncFullLeaveReq(u,emps); }
   };
 
   const reject = (id) => {
-    setLeaveReqs(p => p.map(r => {
-      if(r.id!==id) return r;
-      const u={...r,status:"rejected",rejectReason};
-      syncFullLeaveReq(u,emps);
-      return u;
-    }));
+    const _r2=leaveReqs.find(x=>x.id===id); if(_r2){ const u={..._r2,status:"rejected",rejectReason}; _upsertLeave(u); syncFullLeaveReq(u,emps); }
     setRejectModal(null);
     setRejectReason("");
   };
