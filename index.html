@@ -666,14 +666,33 @@ function App() {
       // employees
       onSnapshot(collection(db,'employees'), snap => {
         if(snap.empty){
+          // Firebase empty - write INIT_EMPS
           const {writeBatch,doc:d2}=window.__fs;
           const b=writeBatch(db);
           INIT_EMPS.forEach(e=>b.set(d2(db,'employees',e.id),e));
           b.commit();
+          // Keep INIT_EMPS in state until Firebase confirms write
+          setEmpsRaw(INIT_EMPS);
         } else {
-          const arr=[];snap.forEach(d=>arr.push(revive(d.data())));
+          const arr=[];
+          snap.forEach(d=>{
+            const data=revive(d.data());
+            // Merge with INIT_EMPS to ensure all fields exist
+            const init=INIT_EMPS.find(e=>e.id===d.id)||{};
+            arr.push({...init,...data});
+          });
           arr.sort((a,b)=>a.id.localeCompare(b.id));
-          setEmps(arr);
+          // If Firebase has fewer employees than INIT_EMPS, add missing ones
+          const missingEmps=INIT_EMPS.filter(e=>!arr.find(a=>a.id===e.id));
+          if(missingEmps.length>0){
+            const {writeBatch,doc:d2}=window.__fs;
+            const b=writeBatch(db);
+            missingEmps.forEach(e=>b.set(d2(db,'employees',e.id),e));
+            b.commit();
+            arr.push(...missingEmps);
+            arr.sort((a,b)=>a.id.localeCompare(b.id));
+          }
+          setEmpsRaw(arr);
         }
         tick();
       });
