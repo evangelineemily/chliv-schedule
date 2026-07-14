@@ -6,37 +6,45 @@
   <title>門市排班系統</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, doc, collection, getDoc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-    const app = initializeApp({ apiKey:"AIzaSyCMI6HCjBynguXdws8NPUI8Doo0DSPRs8E", authDomain:"schedule-e92d3.firebaseapp.com", projectId:"schedule-e92d3" });
-    const db = getFirestore(app);
-
-    // ── Single-doc (generic) ──
-    window.__fbSet    = (col,id,data) => setDoc(doc(db,col,id), data, {merge:true});
-    window.__fbGet    = async(col,id) => { const s=await getDoc(doc(db,col,id)); return s.exists()?s.data():null; };
-    window.__fbListen = (col,id,cb)  => onSnapshot(doc(db,col,id), s=>cb(s.exists()?s.data():null));
-    window.__fbDel    = (col,id)     => deleteDoc(doc(db,col,id));
-
-    // ── Collection listeners (each item = separate Firestore doc) ──
-    window.__fbListenCol = (col,cb) => onSnapshot(collection(db,col), snap=>{
-      const list=[]; snap.forEach(d=>list.push(d.data())); cb(list);
-    });
-
-    // ── Per-collection set/del shortcuts ──
-    window.__fbSetInCol = (col,id,data) => setDoc(doc(db,col,String(id)), data);
-    window.__fbDelInCol = (col,id)      => deleteDoc(doc(db,col,String(id)));
-
-    window.__fbReady = true;
-    window.dispatchEvent(new Event("fb-ready"));
-  </script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <style>* { margin:0; padding:0; box-sizing:border-box; } body { font-family:'Noto Sans TC',sans-serif; }</style>
 </head>
 <body>
 <div id="root"></div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, doc, collection, onSnapshot, setDoc, deleteDoc, writeBatch }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  const app = initializeApp({
+    apiKey: "AIzaSyCMI6HCjBynguXdws8NPUI8Doo0DSPRs8E",
+    authDomain: "schedule-e92d3.firebaseapp.com",
+    projectId: "schedule-e92d3",
+  });
+  const db = getFirestore(app);
+  window.__db = db;
+  window.__fs = { doc, collection, onSnapshot, setDoc, deleteDoc, writeBatch };
+  window.__firebaseReady = true;
+  document.dispatchEvent(new CustomEvent('firebaseReady'));
+</script>
+
 <script>
+const { useState, useMemo, useEffect, useCallback } = React;
+
+async function fbSet(col, id, data) {
+  if(!window.__db) return;
+  const { doc, setDoc } = window.__fs;
+  try { await setDoc(doc(window.__db, col, id), data, { merge: true }); }
+  catch(e) { console.error('fbSet:', e); }
+}
+async function fbDel(col, id) {
+  if(!window.__db) return;
+  const { doc, deleteDoc } = window.__fs;
+  try { await deleteDoc(doc(window.__db, col, id)); }
+  catch(e) { console.error('fbDel:', e); }
+}
+
 const { useState, useMemo, useEffect, useCallback } = React;
 // ── ACCOUNTS ─────────────────────────────────────────────
 const ACCOUNTS = {
@@ -209,182 +217,25 @@ const STAFFING_REQS = {
 };
 
 // ── TAIWAN HOLIDAYS ──────────────────────────────────────
-// 資料來源：
-//  2025~2027：行政院人事行政總處正式公告之政府行政機關辦公日曆表
-//  2028~2032：行政院人事行政總處尚未正式公告，採民間網站（calendar.talllkai.com）依現行
-//             《紀念日及節日實施條例》規則預排版本（含農曆換算與補假規則）
-//  2033~2040：尚無任何官方或民間公告，由系統依現行條例規則程式推算（農曆換算
-//             +補假規則），可能與正式公告有1~2天誤差，正式公告後請更新
-// 月份索引為 0-based（0=1月...11=12月），日期含國定假日本身及補假日
-// ⚠️ 政府每年6月底前會公告次年行事曆，建議每年7月更新一次本表
 function getTwHolidays(year, month) {
   const h = {
     2025: {
-      0: [1, 27], // 元旦、農曆除夕前彈性放假
-      1: [28, 29, 30, 31], // 228連假（含小年夜彈性放假）
-      2: [3, 4], // 兒童節、清明節補假
-      3: [4, 5], // 兒童節、清明節
-      4: [1, 2], // 勞動節
-      5: [7], // 端午節
-      8: [29], // 中秋節
-      9: [6, 10] // 國慶日及補假
+      0: [1],
+      1: [28, 29, 30, 31],
+      2: [3, 4],
+      3: [4, 5],
+      4: [1],
+      5: [7],
+      9: [10]
     },
     2026: {
-      0: [1], // 元旦
-      1: [14, 15, 16, 17, 18, 19, 20, 27], // 小年夜~初三、補假、228補假(2/27)
-      3: [3, 4, 5, 6], // 兒童節清明節含補假
-      4: [1], // 勞動節
-      5: [19], // 端午節
-      8: [25, 28], // 中秋節、教師節
-      9: [10, 25], // 國慶日、光復節
-      11: [25] // 行憲紀念日
-    },
-    // ↓↓↓ 已正式公告 ↓↓↓
-    2027: {
-      0: [1, 2, 3], // 元旦連假
-      1: [4, 5, 6, 7, 8, 9, 10, 27, 28], // 春節(2/4小年夜~2/10含補假)、228連假(2/27~28)
-      3: [3, 4, 5, 6], // 兒童節、清明節（含補假）
-      4: [30], // 勞動節補假
-      5: [1, 2], // 勞動節
-      6: [9], // 端午節
-      8: [15, 28], // 中秋節、教師節
-      9: [9, 10, 11, 23, 24, 25], // 國慶連假、光復節連假
-      11: [24, 25, 26] // 行憲紀念日連假
-    },
-    // ↓↓↓ 以下為民間網站依規則預排版本，僅供參考 ↓↓↓
-    2028: {
-      0: [22, 24, 25, 26, 27, 28, 29, 30], // 春節（小年夜1/24~初四1/29，含補假）
-      1: [26, 27, 28], // 228連假
-      3: [1, 2, 3, 4], // 兒童節、清明節
-      4: [1], // 勞動節
-      5: [27, 28, 29], // 端午節連假
-      8: [25, 27, 28, 29], // 教師節連假
-      9: [3, 10, 25], // 中秋節、國慶日、光復節
-      11: [23, 24, 25] // 行憲紀念日連假
-    },
-    2029: {
-      0: [1], // 元旦
-      1: [10, 11, 12, 13, 14, 15, 16, 17, 18, 28], // 春節（小年夜2/11~初四2/16，含補假）
-      3: [3, 4], // 兒童節、清明節
-      4: [1], // 勞動節
-      5: [15, 16, 17], // 端午節連假
-      8: [21, 22, 23, 28, 29, 30], // 中秋節連假、教師節連假
-      9: [10], // 國慶日
-      10: [25], // 光復節
-      11: [25] // 行憲紀念日
-    },
-    2030: {
-      0: [1], // 元旦
-      1: [1, 2, 3, 4, 5, 6, 7, 28], // 春節（小年夜2/1~初三2/5，含補假）
-      3: [4, 5, 6, 7], // 兒童節、清明節
-      4: [1], // 勞動節
-      5: [5], // 端午節
-      8: [12, 27, 28, 29], // 中秋節、教師節連假
-      9: [10], // 國慶日
-      10: [25, 26, 27], // 光復節連假
-      11: [25] // 行憲紀念日
-    },
-    2031: {
-      0: [1], // 元旦
-      1: [21, 22, 23, 24, 25, 26, 28], // 春節（小年夜1/21~初三1/25，含補假）、和平紀念日(2/28)
-      2: [1, 2], // 228連假延伸
-      3: [3, 4, 5, 6], // 兒童節、清明節連假
-      4: [1], // 勞動節
-      5: [24], // 端午節
-      8: [27, 28, 29], // 教師節連假
-      9: [1, 10, 11, 12, 24, 25, 26], // 中秋節、國慶連假、光復節連假
-      11: [25] // 行憲紀念日
-    },
-    2032: {
-      0: [1], // 元旦
-      1: [7, 8, 9, 10, 11, 12, 13, 14, 15, 27, 28], // 春節（小年夜2/9~初四2/14，含補假）、和平紀念日連假
-      2: [29], // 和平紀念日連假延伸
-      3: [2, 3, 4, 5], // 兒童節、清明節連假
-      4: [30], // 勞動節補假
-      5: [1, 2, 11, 12, 13], // 勞動節、端午節連假
-      8: [18, 19, 20, 28], // 中秋節連假、教師節
-      9: [10, 23, 24, 25], // 國慶日、光復節連假
-      11: [24, 25, 26, 31] // 行憲紀念日連假（含12/31跨年元旦補假）
-    },
-    // ↓↓↓ 以下為系統依現行規則程式推算，僅供參考，正式公告後請更新 ↓↓↓
-    2033: {
-      0: [1, 28, 29, 30, 31], // 元旦、小年夜、除夕、初一
-      1: [1, 2, 28], // 初二、初三、228
-      3: [4, 5], // 兒童節、清明節
-      4: [1, 2], // 勞動節、補假
-      5: [1], // 端午節
-      8: [8, 28], // 中秋節、教師節
-      9: [10, 25], // 國慶日、光復節
-      11: [25, 26] // 行憲紀念日、補假
-    },
-    2034: {
-      0: [1, 2], // 元旦、補假
-      1: [17, 18, 19, 20, 21, 28], // 小年夜~初三（含補假）、228
-      3: [4, 5], // 兒童節、清明節
-      4: [1], // 勞動節
-      5: [20], // 端午節
-      8: [27, 28], // 中秋節、教師節
-      9: [10, 25], // 國慶日、光復節
-      11: [25] // 行憲紀念日
-    },
-    2035: {
-      0: [1], // 元旦
-      1: [6, 7, 8, 9, 10, 28], // 小年夜~初三（含補假）、228
-      3: [4, 5], // 兒童節、清明節
-      4: [1], // 勞動節
-      5: [10, 11], // 端午節、補假
-      8: [16, 17, 28], // 中秋節、補假、教師節
-      9: [10, 25], // 國慶日、光復節
-      11: [25] // 行憲紀念日
-    },
-    2036: {
-      0: [1, 25, 26, 27, 28, 29, 30], // 元旦、小年夜~初三（含補假）
-      1: [28], // 228
-      3: [4, 5], // 兒童節、清明節補假
-      4: [1, 30], // 勞動節、補假
-      8: [28, 29], // 教師節、補假
-      9: [3, 4, 10, 24, 25], // 中秋補假、中秋節、國慶日、光復節補假、光復節
-      11: [25] // 行憲紀念日
-    },
-    2037: {
-      0: [1], // 元旦
-      1: [13, 14, 15, 16, 17, 27, 28], // 小年夜~初三（含補假）、228補假
-      3: [3, 4, 5, 6], // 兒童節（含補假）、清明節、補假
-      4: [1], // 勞動節
-      5: [18], // 端午節
-      8: [24, 28], // 中秋節、教師節
-      9: [9, 10, 25, 26], // 國慶補假、國慶日、光復節、補假
-      11: [25] // 行憲紀念日
-    },
-    2038: {
-      0: [1], // 元旦
-      1: [2, 3, 4, 5, 6, 28], // 小年夜~初三（含補假）、228
-      2: [1], // 228補假延伸
-      3: [4, 5, 30], // 兒童節、清明節(含兒童節補假)、勞動節補假
-      4: [1], // 勞動節
-      5: [7], // 端午節
-      8: [13, 28], // 中秋節、教師節
-      9: [10, 11, 25], // 國慶日、補假、光復節
-      11: [24, 25, 31] // 行憲補假、行憲紀念日、跨年元旦補假
-    },
-    2039: {
-      0: [1, 21, 22, 23, 24, 25, 26], // 元旦、小年夜~初三（含補假）
-      1: [28], // 228
-      3: [4, 5], // 兒童節、清明節
-      4: [1, 2, 27], // 勞動節、補假、端午節
-      8: [28], // 教師節
-      9: [2, 3, 10, 25], // 中秋節、補假、國慶日、光復節
-      11: [25, 26] // 行憲紀念日、補假
-    },
-    2040: {
-      0: [1, 2], // 元旦、補假
-      1: [10, 11, 12, 13, 14, 28], // 小年夜~初三（含補假）、228
-      3: [4, 5], // 兒童節、清明節
-      4: [1], // 勞動節
-      5: [14], // 端午節
-      8: [20, 28], // 中秋節、教師節
-      9: [10, 25], // 國慶日、光復節
-      11: [25] // 行憲紀念日
+      0: [1],
+      1: [16, 17, 18, 19, 20],
+      2: [3, 4],
+      3: [5, 6],
+      4: [1],
+      5: [19],
+      9: [10]
     }
   };
   return (h[year] || {})[month] || [];
@@ -427,146 +278,6 @@ const senMo = jd => {
 };
 
 // ── EMPLOYEES (from Google Sheet) ───────────────────────
-
-// ── GOOGLE SHEET SYNC ──────────────────────────────────────
-const GAS_URL = "https://script.google.com/macros/s/AKfycbwWPLsRknUwDv8giY-E_oJPU1pLgDPTktvQzuwwsaS6Egw3wEUOzOD6kYoNI-HM_r74/exec";
-function syncToSheet(type,payload){fetch(GAS_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"application/json"},body:JSON.stringify({type,payload})}).catch(()=>{});}
-function syncLeaveReq(req,emps){const emp=emps.find(e=>e.id===req.empId);syncToSheet("leaveRequest",{...req,empName:emp?emp.name:req.empId});}
-function syncOvertimeReq(req,emps){const emp=emps.find(e=>e.id===req.empId);syncToSheet("overtimeRequest",{...req,empName:emp?emp.name:req.empId});}
-function syncFullLeaveReq(req,emps){
-  const emp=emps.find(e=>e.id===req.empId);
-  (req.dates||[{year:req.year,month:req.month,day:req.day}]).forEach(d=>{
-    syncToSheet("leaveRequest",{id:req.id,empId:req.empId,empName:emp?emp.name:req.empId,year:d.year,month:d.month,day:d.day,leaveType:req.leaveType,sickType:req.sickType||"",reason:req.reason||"",status:req.status,ts:req.ts});
-  });
-}
-function syncEmployee(emp){syncToSheet("employee",emp);}
-function syncScheduleDay(store,year,month,day,slots,emps){syncToSheet("schedule",{store,year,month,day,slots:slots.map(s=>({...s,empName:(emps.find(e=>e.id===s.empId)||{}).name||s.empId}))});}
-
-// ── FIREBASE STATE HOOK ──────────────────────────────────────
-const { useRef } = React;
-// ══════════════════════════════════════════════════════════
-// FIREBASE HOOKS
-// ══════════════════════════════════════════════════════════
-
-// ── useColState: each item in the array is a SEPARATE Firestore doc ──
-// col       = Firestore collection name
-// idKey     = field name used as the document ID (e.g. "id", "reqId")
-// initItems = seed data written on first run (when collection is empty)
-function useColState(col, idKey, initItems){
-  const [items, setItemsRaw] = useState([]);
-  const [loaded, setLoaded]  = useState(false);
-  const loadedRef  = useRef(true); // default true so writes are never blocked
-  const localRef   = useRef({}); // id -> item, tracks recent local writes
-
-  useEffect(()=>{
-    if(!window.__fbListenCol){ loadedRef.current=true; setLoaded(true); setItemsRaw(initItems||[]); return; }
-    const unsub = window.__fbListenCol(col, list=>{
-      if(list.length > 0){
-        // Merge remote list with any local writes not yet echoed back
-        const remoteMap={};
-        list.forEach(item=>{ remoteMap[item[idKey]]=item; });
-        Object.assign(remoteMap, localRef.current);
-        setItemsRaw(Object.values(remoteMap));
-      } else if(!loadedRef.current && initItems && initItems.length>0){
-        // Empty collection on first listen → seed with initItems
-        initItems.forEach(item=>{
-          localRef.current[item[idKey]]=item;
-          if(window.__fbSetInCol) window.__fbSetInCol(col, item[idKey], item);
-        });
-        setItemsRaw(initItems);
-      }
-      // Always mark as loaded regardless of whether collection was empty or not
-      loadedRef.current=true;
-      setLoaded(true);
-    });
-    return unsub;
-  },[col]);
-
-  // Upsert a single item (only touches that one Firestore doc)
-  const upsertItem = useCallback(item=>{
-    if(!loadedRef.current) return;
-    const id = item[idKey];
-    localRef.current[id] = item;
-    setItemsRaw(prev=>{
-      const exists = prev.find(x=>x[idKey]===id);
-      return exists ? prev.map(x=>x[idKey]===id?item:x) : [...prev, item];
-    });
-    if(window.__fbSetInCol) window.__fbSetInCol(col, id, item);
-  },[col, idKey]);
-
-  // Remove a single item
-  const removeItem = useCallback(id=>{
-    if(!loadedRef.current) return;
-    delete localRef.current[id];
-    setItemsRaw(prev=>prev.filter(x=>x[idKey]!==id));
-    if(window.__fbDelInCol) window.__fbDelInCol(col, id);
-  },[col, idKey]);
-
-  // Bulk updater (like setItems(prev=>prev.map(...))) — writes only changed items
-  const updateMany = useCallback(updater=>{
-    if(!loadedRef.current) return;
-    setItemsRaw(prev=>{
-      const next = typeof updater==="function" ? updater(prev) : updater;
-      next.forEach((newItem, i)=>{
-        const oldItem = prev.find(x=>x[idKey]===newItem[idKey]);
-        if(!oldItem || JSON.stringify(newItem)!==JSON.stringify(oldItem)){
-          localRef.current[newItem[idKey]]=newItem;
-          if(window.__fbSetInCol) window.__fbSetInCol(col, newItem[idKey], newItem);
-        }
-      });
-      return next;
-    });
-  },[col, idKey]);
-
-  return { items, upsertItem, removeItem, updateMany, loaded };
-}
-
-// ── useSingleDoc: one Firestore document stores one JSON value ──
-// Used for: sched (keyed by month), staffPasswords, evtDays
-// These are OK as single docs because they are keyed by month/store and
-// concurrent writes to different months/stores don't conflict.
-function useSingleDoc(docId, defaultVal){
-  const [val, setValRaw] = useState(defaultVal);
-  const [loaded, setLoaded] = useState(false);
-  const loadedRef  = useRef(false);
-  const writingRef = useRef(false);
-  const pendingRef = useRef(null);
-
-  useEffect(()=>{
-    if(!window.__fbListen){ loadedRef.current=true; setLoaded(true); return; }
-    const unsub = window.__fbListen("app", docId, data=>{
-      if(writingRef.current){ loadedRef.current=true; setLoaded(true); return; }
-      if(data && data.v !== undefined){ try{ setValRaw(JSON.parse(data.v)); }catch(e){} }
-      loadedRef.current=true;
-      setLoaded(true);
-    });
-    return unsub;
-  },[docId]);
-
-  const setVal = useCallback(updater=>{
-    if(!loadedRef.current) return;
-    setValRaw(prev=>{
-      const next = typeof updater==="function" ? updater(prev) : updater;
-      if(window.__fbSet){
-        let s = next;
-        if(next && typeof next==="object" && !Array.isArray(next))
-          s = Object.fromEntries(Object.entries(next).map(([k,v])=>[k,v instanceof Set?[...v]:v]));
-        writingRef.current = true;
-        clearTimeout(pendingRef.current);
-        const p = window.__fbSet("app", docId, {v: JSON.stringify(s)});
-        const done = ()=>{ pendingRef.current=setTimeout(()=>{ writingRef.current=false; },500); };
-        if(p&&p.then) p.then(done).catch(()=>{ writingRef.current=false; });
-        else done();
-      }
-      return next;
-    });
-  },[docId]);
-
-  return [val, setVal, loaded];
-}
-
-
-
 const INIT_EMPS = [
 // id, name, eng, type, role(barista/staff), certified, stores[], fixedHQ, active, joinDate, seniority, annualLeft, annualExpiry, sickUsed, personalUsed
 {
@@ -883,25 +594,24 @@ const INIT_EMPS = [
 function App() {
   const [user, setUser] = useState(null);
   const [page, setPage] = useState("overview");
-  const [fbReady,setFbReady] = useState(!!window.__fbReady);
-  useEffect(()=>{
-    if(window.__fbReady){setFbReady(true);return;}
-    const h=()=>setFbReady(true);
-    window.addEventListener("fb-ready",h);
-    return ()=>window.removeEventListener("fb-ready",h);
-  },[]);
-  const {items:emps, upsertItem:_upsertEmpRaw, updateMany:_updateEmpsMany, loaded:empsLoaded} = useColState("emps","id",INIT_EMPS);
-  const _upsertEmp = useCallback(emp=>{ _upsertEmpRaw(emp); syncEmployee(emp); },[_upsertEmpRaw]);
-  const setEmps = useCallback(updater=>{
-    if(typeof updater==="function") _updateEmpsMany(updater);
-    else _updateEmpsMany(()=>updater);
-  },[_updateEmpsMany]);
+  const [emps, setEmpsRaw] = React.useState(INIT_EMPS);
+  const setEmps = React.useCallback(u => setEmpsRaw(prev => {
+    const next=typeof u==='function'?u(prev):u;
+    next.forEach(e=>{
+      const old=prev.find(p=>p.id===e.id);
+      if(JSON.stringify(old)!==JSON.stringify(e)) fbSet('employees',e.id,e);
+    });
+    return next;
+  }),[]);
   const now = useMemo(() => new Date(), []);
 
   // Auto-grant annual leave on work anniversaries (Taiwan Labor Standards Act).
+  // Each employee's `lastLeaveGrant` stores a key for the most recent
+  // anniversary already granted. If today's "last anniversary" is newer,
+  // grant the entitlement for that anniversary year and advance the key.
+  // annualExpiry is set to 1 year after that anniversary (ROC calendar).
   useEffect(() => {
-    if(!empsLoaded) return;
-    _updateEmpsMany(prev => prev.map(e => {
+    setEmps(prev => prev.map(e => {
       if (e.type !== "正職" || !e.joinDate || !e.active) return e;
       const last = lastAnniversary(e.joinDate, now);
       if (!last) return e;
@@ -918,73 +628,201 @@ function App() {
         lastLeaveGrant: lastKey
       };
     }));
-  }, [now, empsLoaded]);
+  }, [now]);
   const [vY, setVY] = useState(() => new Date().getFullYear());
   const [vM, setVM] = useState(() => new Date().getMonth()); // 0-indexed，自動讀取當月
 
-  // schedule[storeKey][`${y}-${m}-${d}`] = [{empId,position,shift,leave}]
-  const [sched, setSched] = useSingleDoc("sched",{});
-  // mustOff[empId] = [{year,month,day,ts}]
-  const {items:_mustOffList, upsertItem:_upsertMustOff, loaded:_mustOffLoaded} = useColState("mustOff","empId",[]);
-  // Convert list to map for backward compat: mustOff[empId] = [{year,month,day,ts}]
-  const mustOff = useMemo(()=>{ const m={}; _mustOffList.forEach(x=>{ m[x.empId]=x.days||[]; }); return m; },[_mustOffList]);
-  const setMustOff = useCallback(updater=>{
-    const next = typeof updater==="function" ? updater(mustOff) : updater;
-    Object.entries(next).forEach(([empId,days])=>{
-      _upsertMustOff({empId, days});
+  // ── Firebase-connected state ─────────────────────────────
+  const [loading, setLoading] = React.useState(true);
+  const [sched, setSchedRaw] = React.useState({});
+  const [mustOff, setMustOffRaw] = React.useState({});
+  const [partAvail, setPARaw] = React.useState({});
+  const [submissions, setSubmissionsRaw] = React.useState({});
+  const [extraLeaveReqs, setExtraLeaveReqsRaw] = React.useState([]);
+  const [overtimeReqs, setOvertimeReqsRaw] = React.useState([]);
+  const [skillAssess, setSkillAssessRaw] = React.useState({});
+  const [monthlyReviews, setMonthlyReviewsRaw] = React.useState({});
+  const [staffPasswords, setStaffPasswordsRaw] = React.useState({});
+  const [evtDays, setEvtDaysRaw] = React.useState({jiufen:new Set(),huashan:new Set(),xinguang:new Set(),hq:new Set()});
+
+  // Firebase sync on mount
+  React.useEffect(() => {
+    const init = () => {
+      if(!window.__db) return;
+      const { collection, onSnapshot, doc } = window.__fs;
+      const db = window.__db;
+      let done = 0; const total = 10;
+      const tick = () => { done++; if(done>=total) setLoading(false); };
+
+      const revive = v => {
+        if(v&&typeof v==='object'&&Array.isArray(v._set)) return new Set(v._set);
+        if(Array.isArray(v)) return v.map(revive);
+        if(v&&typeof v==='object'){const o={};for(const k of Object.keys(v))o[k]=revive(v[k]);return o;}
+        return v;
+      };
+
+      // employees
+      onSnapshot(collection(db,'employees'), snap => {
+        if(snap.empty){
+          const {writeBatch,doc:d2}=window.__fs;
+          const b=writeBatch(db);
+          INIT_EMPS.forEach(e=>b.set(d2(db,'employees',e.id),e));
+          b.commit();
+        } else {
+          const arr=[];snap.forEach(d=>arr.push(revive(d.data())));
+          arr.sort((a,b)=>a.id.localeCompare(b.id));
+          setEmps(arr);
+        }
+        tick();
+      });
+
+      // schedule
+      onSnapshot(collection(db,'schedule'), snap => {
+        const r={};snap.forEach(d=>{
+          const [sk,...rest]=d.id.split('__');const dk=rest.join('__');
+          if(!r[sk])r[sk]={};r[sk][dk]=revive(d.data().slots||[]);
+        });
+        setSchedRaw(r); tick();
+      });
+
+      const colToObj = (name, setter) => onSnapshot(collection(db,name), snap => {
+        const r={};snap.forEach(d=>{r[d.id]=revive(d.data());});setter(r);tick();
+      });
+      const colToArr = (name, setter) => onSnapshot(collection(db,name), snap => {
+        const r=[];snap.forEach(d=>r.push({id:d.id,...revive(d.data())}));setter(r);tick();
+      });
+
+      colToObj('mustOff', v=>setMustOffRaw(Object.fromEntries(Object.entries(v).map(([k,vv])=>[k,vv.days||[]]))));
+      colToObj('partAvail', v=>setPARaw(Object.fromEntries(Object.entries(v).map(([k,vv])=>[k,vv.days||[]]))));
+      colToObj('submissions', setSubmissionsRaw);
+      colToObj('skillAssess', setSkillAssessRaw);
+      colToObj('monthlyReviews', setMonthlyReviewsRaw);
+      colToArr('extraLeaveReqs', setExtraLeaveReqsRaw);
+      colToArr('overtimeReqs', setOvertimeReqsRaw);
+
+      // evtDays
+      onSnapshot(doc(db,'config','evtDays'), snap => {
+        if(snap.exists()){
+          const d=snap.data();
+          setEvtDaysRaw({
+            jiufen:new Set(d.jiufen||[]),
+            huashan:new Set(d.huashan||[]),
+            xinguang:new Set(d.xinguang||[]),
+            hq:new Set(d.hq||[])
+          });
+        }
+        tick();
+      });
+
+      // staffPasswords
+      onSnapshot(doc(db,'config','staffPasswords'), snap => {
+        if(snap.exists()) setStaffPasswordsRaw(snap.data());
+        tick();
+      });
+    };
+
+    if(window.__firebaseReady) init();
+    else document.addEventListener('firebaseReady', init);
+  }, []);
+
+  // Wrapped setters that sync to Firebase
+  const setSched = React.useCallback(u => setSchedRaw(prev => {
+    const next=typeof u==='function'?u(prev):u;
+    Object.keys(next).forEach(sk=>{
+      Object.keys(next[sk]||{}).forEach(dkey=>{
+        const id=`${sk}__${dkey}`;
+        fbSet('schedule',id,{slots:next[sk][dkey]||[]});
+      });
     });
-  },[mustOff, _upsertMustOff]);
-  // partAvail[empId] = [{year,month,day,startTime,endTime}]
-  const {items:_paList, upsertItem:_upsertPA} = useColState("partAvail","empId",[]);
-  const partAvail = useMemo(()=>{ const m={}; _paList.forEach(x=>{ m[x.empId]=x.slots||[]; }); return m; },[_paList]);
-  const setPA = useCallback(updater=>{
-    const next = typeof updater==="function" ? updater(partAvail) : updater;
-    Object.entries(next).forEach(([empId,slots])=>{ _upsertPA({empId, slots}); });
-  },[partAvail, _upsertPA]);
-  // submissions[empId][`${y}-${m}`] = { submitted:bool, history:[{ts,before:[days],after:[days]}] }
-  const [submissions,setSubmissions] = useSingleDoc("submissions",{});
-  // extraLeaveReqs: [{id, empId, year, month, day, reason, status:'pending'|'approved'|'rejected', ts}]
-  const {items:extraLeaveReqs, upsertItem:_upsertExtraLeave} = useColState("extraLeaveReqs","id",[]);
-  const setExtraLeaveReqs = useCallback(updater=>{
-    const next = typeof updater==="function" ? updater(extraLeaveReqs) : updater;
-    next.forEach(req=>{ _upsertExtraLeave(req); });
-  },[extraLeaveReqs, _upsertExtraLeave]);
+    return next;
+  }),[]);
 
-  // skillAssessments[empId] = { counter:{date,result}, flavor:{date,result}, barista:{date,result} }
-  // result: null | 'scheduled' | 'pass' | 'fail'
-  const [skillAssess, setSkillAssess] = useSingleDoc("skillAssess",{});
+  const setMustOff = React.useCallback(u => setMustOffRaw(prev => {
+    const next=typeof u==='function'?u(prev):u;
+    Object.keys(next).forEach(k=>{
+      if(JSON.stringify(prev[k])!==JSON.stringify(next[k]))
+        fbSet('mustOff',k,{days:next[k]||[]});
+    });
+    return next;
+  }),[]);
 
-  // monthlyReviews[empId][`${y}-${m}`] = { scores:{managerUsername:{service,hygiene,tidiness,flavor,latte_art}}, notes:{managerUsername:{improve,bonus}} }
-  const [monthlyReviews, setMonthlyReviews] = useSingleDoc("monthlyReviews",{});
+  const setPA = React.useCallback(u => setPARaw(prev => {
+    const next=typeof u==='function'?u(prev):u;
+    Object.keys(next).forEach(k=>{
+      if(JSON.stringify(prev[k])!==JSON.stringify(next[k]))
+        fbSet('partAvail',k,{days:next[k]||[]});
+    });
+    return next;
+  }),[]);
 
-  // overtimeReqs: [{id, empId, year, month, day, hours, reason, status:'pending'|'approved'|'rejected', ts}]
-  const {items:overtimeReqs, upsertItem:_upsertOT} = useColState("overtimeReqs","id",[]);
-  const setOvertimeReqs = useCallback(updater=>{
-    const next = typeof updater==="function" ? updater(overtimeReqs) : updater;
-    next.forEach(req=>{ _upsertOT(req); });
-  },[overtimeReqs, _upsertOT]);
+  const setSubmissions = React.useCallback(u => setSubmissionsRaw(prev => {
+    const next=typeof u==='function'?u(prev):u;
+    Object.keys(next).forEach(k=>{
+      if(JSON.stringify(prev[k])!==JSON.stringify(next[k]))
+        fbSet('submissions',k,next[k]);
+    });
+    return next;
+  }),[]);
 
-  // leaveReqs: [{id, empId, dates:[{year,month,day}], leaveType:'annual'|'sick'|'personal', sickType:'outpatient'|'inpatient', reason, status:'pending'|'approved'|'rejected', rejectReason, ts}]
-  const {items:leaveReqs, upsertItem:_upsertLeave} = useColState("leaveReqs","id",[]);
-  const setLeaveReqs = useCallback(updater=>{
-    const next = typeof updater==="function" ? updater(leaveReqs) : updater;
-    next.forEach(req=>{ _upsertLeave(req); });
-  },[leaveReqs, _upsertLeave]);
+  const setSkillAssess = React.useCallback(u => setSkillAssessRaw(prev => {
+    const next=typeof u==='function'?u(prev):u;
+    Object.keys(next).forEach(k=>{
+      if(JSON.stringify(prev[k])!==JSON.stringify(next[k]))
+        fbSet('skillAssess',k,next[k]);
+    });
+    return next;
+  }),[]);
 
-  // staffPasswords[empId] = password (self-set by employees on first login)
-  const [staffPasswords, setStaffPasswords] = useSingleDoc("staffPasswords",{});
-  // eventDays[storeKey] = Set of `${y}-${m}-${d}`
-  const [evtDaysRaw,setEvtDaysRaw]=useSingleDoc("evtDays",{jiufen:[],huashan:[],xinguang:[],hq:[]});
-  const evtDays=useMemo(()=>({jiufen:new Set(evtDaysRaw.jiufen||[]),huashan:new Set(evtDaysRaw.huashan||[]),xinguang:new Set(evtDaysRaw.xinguang||[]),hq:new Set(evtDaysRaw.hq||[])}),[evtDaysRaw]);
-  const setEvtDays=useCallback(updater=>{setEvtDaysRaw(prev=>{const ps={jiufen:new Set(prev.jiufen||[]),huashan:new Set(prev.huashan||[]),xinguang:new Set(prev.xinguang||[]),hq:new Set(prev.hq||[])};const next=typeof updater==="function"?updater(ps):updater;return {jiufen:[...(next.jiufen instanceof Set?next.jiufen:new Set(next.jiufen||[]))],huashan:[...(next.huashan instanceof Set?next.huashan:new Set(next.huashan||[]))],xinguang:[...(next.xinguang instanceof Set?next.xinguang:new Set(next.xinguang||[]))],hq:[...(next.hq instanceof Set?next.hq:new Set(next.hq||[]))]};});},[setEvtDaysRaw]);
+  const setMonthlyReviews = React.useCallback(u => setMonthlyReviewsRaw(prev => {
+    const next=typeof u==='function'?u(prev):u;
+    Object.keys(next).forEach(k=>{
+      if(JSON.stringify(prev[k])!==JSON.stringify(next[k]))
+        fbSet('monthlyReviews',k,next[k]);
+    });
+    return next;
+  }),[]);
+
+  const setExtraLeaveReqs = React.useCallback(u => setExtraLeaveReqsRaw(prev => {
+    const next=typeof u==='function'?u(prev):u;
+    next.forEach(r=>{if(!prev.find(p=>p.id===r.id&&JSON.stringify(p)===JSON.stringify(r)))fbSet('extraLeaveReqs',r.id,r);});
+    prev.forEach(r=>{if(!next.find(n=>n.id===r.id))fbDel('extraLeaveReqs',r.id);});
+    return next;
+  }),[]);
+
+  const setOvertimeReqs = React.useCallback(u => setOvertimeReqsRaw(prev => {
+    const next=typeof u==='function'?u(prev):u;
+    next.forEach(r=>{if(!prev.find(p=>p.id===r.id&&JSON.stringify(p)===JSON.stringify(r)))fbSet('overtimeReqs',r.id,r);});
+    prev.forEach(r=>{if(!next.find(n=>n.id===r.id))fbDel('overtimeReqs',r.id);});
+    return next;
+  }),[]);
+
+  const setEvtDays = React.useCallback(u => setEvtDaysRaw(prev => {
+    const next=typeof u==='function'?u(prev):u;
+    const data={};Object.keys(next).forEach(k=>{data[k]=[...next[k]];});
+    fbSet('config','evtDays',data);
+    return next;
+  }),[]);
+
+  const setStaffPasswords = React.useCallback(u => setStaffPasswordsRaw(prev => {
+    const next=typeof u==='function'?u(prev):u;
+    fbSet('config','staffPasswords',next);
+    return next;
+  }),[]);
+
+  // Loading screen
+  if(loading) return React.createElement('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontFamily:'Noto Sans TC,sans-serif',fontSize:18,color:'#666'}},'載入中...');
+
   const dim = getDIM(vY, vM);
   const hols = getTwHolidays(vY, vM);
   const dk = (y, m, d) => `${y}-${m}-${d}`;
   const getSD = (sk, day) => (sched[sk] || {})[dk(vY, vM, day)] || [];
-  const setSD = (sk, day, slots) => {
-    setSched(p => ({...p,[sk]:{...(p[sk]||{}),[dk(vY,vM,day)]:slots}}));
-    syncScheduleDay(sk,vY,vM,day,slots,emps);
-  };
+  const setSD = (sk, day, slots) => setSched(p => ({
+    ...p,
+    [sk]: {
+      ...(p[sk] || {}),
+      [dk(vY, vM, day)]: slots
+    }
+  }));
   const getEmp = id => emps.find(e => e.id === id);
   const today = now.getDate();
   // TEMP: fill-window restriction disabled for testing. Restore with:
@@ -992,7 +830,6 @@ function App() {
   const fillOpen = true,
     fillClosed = false,
     canFill = true;
-  if(!fbReady || !empsLoaded) return React.createElement('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontSize:18,color:'#1a1a2e',fontWeight:700}},'⏳ 載入中...');
   if (!user) return /*#__PURE__*/React.createElement(Login, {
     emps: emps,
     staffPasswords: staffPasswords,
@@ -1009,6 +846,9 @@ function App() {
     key: "eventMark",
     label: "活動標記"
   }, {
+    key: "auto",
+    label: "自動排班"
+  }, {
     key: "edit",
     label: "手動排班"
   }, {
@@ -1020,9 +860,6 @@ function App() {
   }, {
     key: "fill",
     label: "填班狀況"
-  }, {
-    key: "leaveMgr",
-    label: "假單審核"
   }, {
     key: "assess",
     label: "考核管理"
@@ -1036,9 +873,6 @@ function App() {
   }, {
     key: "myFill",
     label: "填寫必休"
-  }, {
-    key: "myLeave",
-    label: "我的假勤"
   }, {
     key: "fill",
     label: "填班狀況"
@@ -1055,7 +889,6 @@ function App() {
   }];
   const nav = user.role === "manager" ? manNav : user.role === "hr" ? hrNav : stNav;
   const sp = {
-    _upsertEmp, _updateEmpsMany, _upsertExtraLeave, _upsertLeave, _upsertOT,
     emps,
     setEmps,
     vY,
@@ -1087,8 +920,6 @@ function App() {
     setMonthlyReviews,
     overtimeReqs,
     setOvertimeReqs,
-    leaveReqs,
-    setLeaveReqs,
     now
   };
   return /*#__PURE__*/React.createElement("div", {
@@ -1160,7 +991,7 @@ function App() {
     style: {
       padding: 16
     }
-  }, page === "overview" && /*#__PURE__*/React.createElement(Overview, sp), page === "eventMark" && /*#__PURE__*/React.createElement(EventMark, sp), page === "edit" && /*#__PURE__*/React.createElement(EditSched, sp), page === "view" && /*#__PURE__*/React.createElement(ViewSched, sp), page === "staff" && /*#__PURE__*/React.createElement(StaffMgr, sp), page === "fill" && /*#__PURE__*/React.createElement(FillStatus, sp), page === "leaveMgr" && /*#__PURE__*/React.createElement(LeaveMgr, sp), page === "hr" && /*#__PURE__*/React.createElement(HRPage, sp), page === "mySchedule" && /*#__PURE__*/React.createElement(MySchedule, sp), page === "myFill" && /*#__PURE__*/React.createElement(MyFill, sp), page === "myLeave" && /*#__PURE__*/React.createElement(MyLeave, sp), page === "assess" && /*#__PURE__*/React.createElement(AssessMgr, sp), page === "myAssess" && /*#__PURE__*/React.createElement(MyAssess, sp), page === "hours" && /*#__PURE__*/React.createElement(HoursMgr, sp), page === "myOvertime" && /*#__PURE__*/React.createElement(MyOvertime, sp)));
+  }, page === "overview" && /*#__PURE__*/React.createElement(Overview, sp), page === "eventMark" && /*#__PURE__*/React.createElement(EventMark, sp), page === "auto" && /*#__PURE__*/React.createElement(AutoSched, sp), page === "edit" && /*#__PURE__*/React.createElement(EditSched, sp), page === "view" && /*#__PURE__*/React.createElement(ViewSched, sp), page === "staff" && /*#__PURE__*/React.createElement(StaffMgr, sp), page === "fill" && /*#__PURE__*/React.createElement(FillStatus, sp), page === "hr" && /*#__PURE__*/React.createElement(HRPage, sp), page === "mySchedule" && /*#__PURE__*/React.createElement(MySchedule, sp), page === "myFill" && /*#__PURE__*/React.createElement(MyFill, sp), page === "assess" && /*#__PURE__*/React.createElement(AssessMgr, sp), page === "myAssess" && /*#__PURE__*/React.createElement(MyAssess, sp), page === "hours" && /*#__PURE__*/React.createElement(HoursMgr, sp), page === "myOvertime" && /*#__PURE__*/React.createElement(MyOvertime, sp)));
 }
 function MNav({
   y,
@@ -1300,13 +1131,9 @@ function Login({
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 18,
-      fontWeight: 900,
-      letterSpacing: 1.5,
-      color: "#1a1a2e",
-      fontFamily: "Georgia, 'Times New Roman', serif"
+      fontSize: 34
     }
-  }, "CHLIV"), /*#__PURE__*/React.createElement("h2", {
+  }, "⟳"), /*#__PURE__*/React.createElement("h2", {
     style: {
       margin: "4px 0 0",
       color: "#1a1a2e",
@@ -1558,13 +1385,12 @@ function Overview({
   // Work days this month
   let workDays = 0;
   for (let d = 1; d <= dim; d++) if (!isWknd(vY, vM, d) && !hols.includes(d)) workDays++;
-  const restDays = dim - workDays; // 應休天數 = 總天數 - 應上班天數
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
     style: PT
   }, "總覽"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
-      gridTemplateColumns: "repeat(5,1fr)",
+      gridTemplateColumns: "repeat(4,1fr)",
       gap: 12,
       marginBottom: 20
     }
@@ -1579,15 +1405,10 @@ function Overview({
     s: "人",
     c: "#e67e22"
   }, {
-    l: "本月應上班天數",
+    l: "本月工作天",
     v: workDays,
     s: "天",
     c: "#27ae60"
-  }, {
-    l: "本月應休天數",
-    v: restDays,
-    s: "天",
-    c: "#16a085"
   }, {
     l: "已排班",
     v: cov,
@@ -1943,11 +1764,574 @@ function EventMark({
   }))));
 }
 
+// ── AUTO SCHEDULE ────────────────────────────────────────
+function AutoSched({
+  emps,
+  vY,
+  vM,
+  dim,
+  hols,
+  sched,
+  setSched,
+  mustOff,
+  partAvail,
+  evtDays,
+  extraLeaveReqs
+}) {
+  const [log, setLog] = useState([]);
+  const [done, setDone] = useState(false);
+  const [restSummary, setRestSummary] = useState([]);
+  const [shortages, setShortages] = useState([]);
+  const run = () => {
+    const ns = {};
+    STORE_KEYS.forEach(sk => {
+      ns[sk] = {};
+    });
+    const logs = [];
+    const active = emps.filter(e => e.active);
+
+    // ── 日曆 ─────────────────────────────────────────────────
+    const allDays = [];
+    for (let d = 1; d <= dim; d++) {
+      const wk = isWknd(vY, vM, d),
+        isH = hols.includes(d);
+      allDays.push({
+        d,
+        wk,
+        isH
+      });
+    }
+    const restQuota = allDays.filter(x => x.wk || x.isH).length;
+    const maxWorkDays = dim - restQuota;
+    const ftEmps = active.filter(e => e.type === '正職' && !e.fixedHQ);
+    const ptEmps = active.filter(e => e.type === '兼職' && !e.fixedHQ);
+    const ftFixed = active.filter(e => e.fixedHQ && e.type === '正職');
+    const ptFixed = active.filter(e => e.fixedHQ && e.type === '兼職');
+    const otherStores = STORE_KEYS.filter(sk => sk !== 'hq');
+
+    // ── 必休（先填先得）──────────────────────────────────────
+    const confirmedMustOff = {};
+    ftEmps.forEach(e => {
+      confirmedMustOff[e.id] = new Set();
+    });
+    for (let d = 1; d <= dim; d++) {
+      const reqs = [];
+      ftEmps.forEach(e => {
+        const mo = (mustOff[e.id] || []).find(o => o.year === vY && o.month === vM && o.day === d);
+        if (mo) reqs.push({
+          empId: e.id,
+          ts: mo.ts || 0
+        });
+      });
+      if (!reqs.length) continue;
+      reqs.sort((a, b) => a.ts - b.ts);
+      confirmedMustOff[reqs[0].empId].add(d);
+    }
+    // 特別假
+    extraLeaveReqs.filter(r => r.year === vY && r.month === vM && r.status === 'approved').forEach(r => {
+      if (confirmedMustOff[r.empId]) confirmedMustOff[r.empId].add(r.day);
+    });
+
+    // ── Track ─────────────────────────────────────────────────
+    const assignCount = {};
+    const assignedOn = {}; // day -> Set<empId>
+    active.forEach(e => assignCount[e.id] = 0);
+    for (let d = 1; d <= dim; d++) assignedOn[d] = new Set();
+
+    // 某人某天是否可以工作（正職）
+    const ftCanWork = (e, d, sk) => {
+      if (!e.active || e.fixedHQ) return false;
+      if (!e.stores.includes(sk)) return false;
+      if (confirmedMustOff[e.id]?.has(d)) return false;
+      if (assignedOn[d].has(e.id)) return false;
+      if ((assignCount[e.id] || 0) >= maxWorkDays) return false;
+      return true;
+    };
+    const ptCanWork = (e, d, sk, paToday) => {
+      if (!e.active || e.fixedHQ) return false;
+      if (!e.stores.includes(sk)) return false;
+      if (!paToday.has(e.id)) return false;
+      if (assignedOn[d].has(e.id)) return false;
+      return true;
+    };
+
+    // ── PASS 0: HQ固定人員 ──────────────────────────────────
+    for (let d = 1; d <= dim; d++) {
+      const k = dk(vY, vM, d);
+      if (evtDays['hq'].has(`${vY}-${vM}-${d}::closed`)) {
+        ns['hq'][k] = [];
+        continue;
+      }
+      const slots = [];
+      ftFixed.forEach(e => {
+        if (!confirmedMustOff[e.id]?.has(d) && !assignedOn[d].has(e.id)) {
+          slots.push({
+            empId: e.id,
+            position: 'counter',
+            shift: '全班',
+            leave: null
+          });
+          assignedOn[d].add(e.id);
+          assignCount[e.id]++;
+        }
+      });
+      ptFixed.forEach(e => {
+        const av = (partAvail[e.id] || []).find(a => a.year === vY && a.month === vM && a.day === d);
+        if (av && !assignedOn[d].has(e.id)) {
+          slots.push({
+            empId: e.id,
+            position: 'counter',
+            shift: '全班',
+            leave: null,
+            startTime: av.startTime || '',
+            endTime: av.endTime || ''
+          });
+          assignedOn[d].add(e.id);
+          assignCount[e.id]++;
+        }
+      });
+      ns['hq'][k] = slots;
+    }
+
+    // ── PASS 1: 每天每間門市先確保吧台手 ────────────────────
+    // 策略：每天為每間門市選「工作天數最少」的可用吧台手
+    // 確保吧台手工作天數平均分配
+    for (let d = 1; d <= dim; d++) {
+      const {
+        wk,
+        isH
+      } = allDays[d - 1];
+      const paToday = new Set(Object.entries(partAvail).filter(([, arr]) => arr.some(a => a.year === vY && a.month === vM && a.day === d)).map(([id]) => id));
+      for (const sk of otherStores) {
+        const isClosed = evtDays[sk].has(`${vY}-${vM}-${d}::closed`);
+        if (isClosed) {
+          if (!ns[sk][dk(vY, vM, d)]) ns[sk][dk(vY, vM, d)] = [];
+          continue;
+        }
+        if (!ns[sk][dk(vY, vM, d)]) ns[sk][dk(vY, vM, d)] = [];
+
+        // 找可用吧台手：正職優先（工作天少的先），再找兼職
+        const ftBars = ftEmps.filter(e => e.role === 'barista' && ftCanWork(e, d, sk)).sort((a, b) => (assignCount[a.id] || 0) - (assignCount[b.id] || 0));
+        const ptBars = ptEmps.filter(e => e.role === 'barista' && ptCanWork(e, d, sk, paToday)).sort((a, b) => (assignCount[a.id] || 0) - (assignCount[b.id] || 0));
+
+        // 兼職先用（節省正職配額），但只有在正職不缺的情況下
+        // 實際上先正職確保吧台，兼職補櫃台
+        const bar = ftBars[0] || ptBars[0];
+        if (bar) {
+          ns[sk][dk(vY, vM, d)].push({
+            empId: bar.id,
+            position: 'barista',
+            shift: '全班',
+            leave: null
+          });
+          assignedOn[d].add(bar.id);
+          assignCount[bar.id]++;
+        } else {
+          logs.push({
+            t: 'error',
+            m: `${pad(d)}日 ${STORES[sk].name} 無可用吧台手`
+          });
+        }
+      }
+    }
+
+    // ── PASS 2: 每天每間門市補櫃台 ──────────────────────────
+    for (let d = 1; d <= dim; d++) {
+      const {
+        wk,
+        isH
+      } = allDays[d - 1];
+      const paToday = new Set(Object.entries(partAvail).filter(([, arr]) => arr.some(a => a.year === vY && a.month === vM && a.day === d)).map(([id]) => id));
+      for (const sk of otherStores) {
+        const isClosed = evtDays[sk].has(`${vY}-${vM}-${d}::closed`);
+        if (isClosed) continue;
+        const k = dk(vY, vM, d);
+        const existing = ns[sk][k] || [];
+        const hasCnt = existing.some(s => s.position === 'counter');
+        if (hasCnt) continue;
+
+        // 找非吧台手：正職（工作少的先）+ 兼職
+        const ftCnt = ftEmps.filter(e => e.role !== 'barista' && ftCanWork(e, d, sk)).sort((a, b) => (assignCount[a.id] || 0) - (assignCount[b.id] || 0));
+        const ptCnt = ptEmps.filter(e => ptCanWork(e, d, sk, paToday)).sort((a, b) => (assignCount[a.id] || 0) - (assignCount[b.id] || 0));
+
+        // 兼職優先（節省正職天數）
+        const cnt = ptCnt[0] || ftCnt[0];
+        if (cnt) {
+          existing.push({
+            empId: cnt.id,
+            position: 'counter',
+            shift: '全班',
+            leave: null
+          });
+          assignedOn[d].add(cnt.id);
+          assignCount[cnt.id]++;
+        }
+        // 沒有人→吧台手兼（已在PASS1排了吧台，不額外加人）
+      }
+    }
+
+    // ── PASS 3: 假日/活動日補第三人 ─────────────────────────
+    for (let d = 1; d <= dim; d++) {
+      const {
+        wk,
+        isH
+      } = allDays[d - 1];
+      const paToday = new Set(Object.entries(partAvail).filter(([, arr]) => arr.some(a => a.year === vY && a.month === vM && a.day === d)).map(([id]) => id));
+      for (const sk of otherStores) {
+        const isE = evtDays[sk].has(`${vY}-${vM}-${d}::event`);
+        const isClosed = evtDays[sk].has(`${vY}-${vM}-${d}::closed`);
+        if (isClosed || !wk && !isH && !isE) continue;
+        const k = dk(vY, vM, d);
+        const existing = ns[sk][k] || [];
+        if (existing.length >= 3) continue;
+        const ftExtra = ftEmps.filter(e => ftCanWork(e, d, sk)).sort((a, b) => (assignCount[a.id] || 0) - (assignCount[b.id] || 0));
+        const ptExtra = ptEmps.filter(e => ptCanWork(e, d, sk, paToday)).sort((a, b) => (assignCount[a.id] || 0) - (assignCount[b.id] || 0));
+        const extra = ptExtra[0] || ftExtra[0];
+        if (extra) {
+          existing.push({
+            empId: extra.id,
+            position: 'sub_bar',
+            shift: '全班',
+            leave: null
+          });
+          assignedOn[d].add(extra.id);
+          assignCount[extra.id]++;
+        }
+      }
+    }
+
+    // ── PASS 4: 確保每人工作天數正確 ────────────────────────
+    // 4A: 超排者移除（從人力充足的天移除，不影響門市最低需求）
+    ftEmps.forEach(e => {
+      let worked = assignCount[e.id] || 0;
+      if (worked <= maxWorkDays) return;
+      const myDays = [];
+      for (let d = 1; d <= dim; d++) {
+        for (const sk of otherStores) {
+          const k = dk(vY, vM, d);
+          const slots = ns[sk][k] || [];
+          const mySlot = slots.find(s => s.empId === e.id);
+          if (!mySlot) continue;
+          const isBar = mySlot.position === 'barista';
+          const hasOtherBar = slots.some(s => s.empId !== e.id && s.position === 'barista');
+          const hasCnt = slots.some(s => s.empId !== e.id && (s.position === 'counter' || s.position === 'barista'));
+          // 只移除：不是吧台手，或門市還有其他吧台手
+          // 且移除後仍有人力（至少還有吧台手）
+          if ((!isBar || hasOtherBar) && (hasCnt || slots.length > 1)) {
+            myDays.push({
+              d,
+              sk,
+              size: slots.length,
+              isBar
+            });
+          }
+        }
+      }
+      // 優先移除：門市人多的天、非吧台位置
+      myDays.sort((a, b) => b.size - a.size || (a.isBar ? 1 : -1));
+      let removed = 0;
+      for (const {
+        d,
+        sk
+      } of myDays) {
+        if (removed >= worked - maxWorkDays) break;
+        const k = dk(vY, vM, d);
+        ns[sk][k] = (ns[sk][k] || []).filter(s => s.empId !== e.id);
+        assignedOn[d].delete(e.id);
+        assignCount[e.id]--;
+        removed++;
+      }
+    });
+
+    // 4B: 不足者補排（跳過已排滿位置的天）
+    ftEmps.forEach(e => {
+      let worked = assignCount[e.id] || 0;
+      if (worked >= maxWorkDays) return;
+      // 找還沒排、沒必休的天
+      for (let d = 1; d <= dim && worked < maxWorkDays; d++) {
+        if (assignedOn[d].has(e.id)) continue;
+        if (confirmedMustOff[e.id]?.has(d)) continue;
+        // 找一間可以加入的門市
+        const stores = [...(e.primaryStores || []), ...e.stores].filter(s => s !== 'hq');
+        for (const sk of stores) {
+          const isClosed = evtDays[sk]?.has(`${vY}-${vM}-${d}::closed`);
+          if (isClosed) continue;
+          if (!e.stores.includes(sk)) continue;
+          const k = dk(vY, vM, d);
+          if (!ns[sk][k]) ns[sk][k] = [];
+          const existing = ns[sk][k];
+          const hasBar = existing.some(s => s.position === 'barista');
+          const hasCnt = existing.some(s => s.position === 'counter');
+          let pos = null;
+          if (e.role === 'barista' && !hasBar) pos = 'barista';else if (!hasCnt) pos = 'counter';else if (existing.length < 3) pos = 'sub_bar';
+          if (!pos) continue;
+          existing.push({
+            empId: e.id,
+            position: pos,
+            shift: '全班',
+            leave: null
+          });
+          assignedOn[d].add(e.id);
+          assignCount[e.id]++;
+          worked++;
+          break;
+        }
+      }
+      if ((assignCount[e.id] || 0) < maxWorkDays) logs.push({
+        t: 'warn',
+        m: `${e.name} 排${assignCount[e.id] || 0}天，目標${maxWorkDays}天，請手動補排`
+      });
+    });
+
+    // ── PASS 5: 缺口檢查 ────────────────────────────────────
+    const shortageList = [];
+    for (let d = 1; d <= dim; d++) {
+      const {
+        wk
+      } = allDays[d - 1];
+      const k = dk(vY, vM, d);
+      for (const sk of STORE_KEYS) {
+        const isClosed = evtDays[sk]?.has(`${vY}-${vM}-${d}::closed`);
+        if (isClosed) continue;
+        const req = STAFFING_REQS[sk][wk ? 'weekend' : 'weekday'];
+        const slots = ns[sk][k] || [];
+        const counts = {
+          barista: 0,
+          sub_bar: 0,
+          counter: 0
+        };
+        slots.forEach(s => {
+          if (counts[s.position] !== undefined) counts[s.position]++;
+        });
+        const missing = [];
+        Object.entries(req).forEach(([pos, min]) => {
+          if (counts[pos] < min) missing.push(`${POS_LBL[pos]}缺${min - counts[pos]}`);
+        });
+        if (missing.length) shortageList.push({
+          day: d,
+          store: sk,
+          wk,
+          missing
+        });
+      }
+    }
+
+    // ── PASS 6: 統計 ─────────────────────────────────────────
+    const restSum = ftEmps.map(e => {
+      const worked = assignCount[e.id] || 0;
+      const rest = dim - worked;
+      const myMustOff = (mustOff[e.id] || []).filter(o => o.year === vY && o.month === vM).length;
+      return {
+        name: e.name,
+        submitted: myMustOff,
+        worked,
+        rest,
+        quota: restQuota,
+        maxWork: maxWorkDays
+      };
+    });
+    if (logs.length) console.log('排班備註:', logs);
+    setSched(ns);
+    setLog(logs);
+    setRestSummary(restSum);
+    setShortages(shortageList);
+    setDone(true);
+  };
+  const dk = (y, m, d) => `${y}-${m}-${d}`;
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
+    style: PT
+  }, "自動排班"), /*#__PURE__*/React.createElement("div", {
+    style: CA
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: run,
+    style: {
+      background: "#1a1a2e",
+      color: "#e8b86d",
+      border: "none",
+      borderRadius: 8,
+      padding: "11px 24px",
+      fontWeight: 700,
+      fontSize: 14,
+      cursor: "pointer"
+    }
+  }, "🎲 開始自動排班 ", vY, "/", pad(vM + 1))), done && shortages.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...CA,
+      marginTop: 14,
+      borderLeft: "4px solid #e74c3c"
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: {
+      ...CT,
+      color: "#e74c3c"
+    }
+  }, "⚠️ 人力未達標準，請店長手動調整"), /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      fontSize: 12
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      background: "#f8f8f8"
+    }
+  }, /*#__PURE__*/React.createElement("th", {
+    style: TH
+  }, "日期"), /*#__PURE__*/React.createElement("th", {
+    style: TH
+  }, "門市"), /*#__PURE__*/React.createElement("th", {
+    style: TH
+  }, "類型"), /*#__PURE__*/React.createElement("th", {
+    style: TH
+  }, "缺少崗位"))), /*#__PURE__*/React.createElement("tbody", null, shortages.map((s, i) => /*#__PURE__*/React.createElement("tr", {
+    key: i,
+    style: {
+      borderBottom: "1px solid #f0f0f0"
+    }
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "6px 8px"
+    }
+  }, vY, "/", pad(vM + 1), "/", pad(s.day), "（", DAYS_TW[new Date(vY, vM, s.day).getDay()], "）"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "6px 8px",
+      fontWeight: 600,
+      color: STORES[s.store].color
+    }
+  }, STORES[s.store].name), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "6px 8px"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      background: s.wk ? "#fde8e8" : "#e8f4fd",
+      color: s.wk ? "#c0392b" : "#2980b9",
+      borderRadius: 3,
+      padding: "1px 5px"
+    }
+  }, s.wk ? "假日" : "平日")), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "6px 8px",
+      color: "#e74c3c",
+      fontWeight: 600
+    }
+  }, s.missing.join("、"))))))), done && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...CA,
+      marginTop: 14
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: CT
+  }, "排班結果"), shortages.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#27ae60",
+      fontWeight: 600,
+      marginBottom: 12
+    }
+  }, "✅ 排班完成，人力皆達標準") : /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#e67e22",
+      fontWeight: 600,
+      marginBottom: 12
+    }
+  }, "排班完成，但有 ", shortages.length, " 處人力未達標準（詳見上方）"), restSummary.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      fontSize: 13,
+      marginBottom: 4
+    }
+  }, "本月正職排班統計"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "#888",
+      marginBottom: 8
+    }
+  }, "法定休假 ", restSummary[0]?.quota, " 天（週末＋國定假日），最多工作 ", restSummary[0]?.maxWork, " 天"), /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      fontSize: 12
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      background: "#f8f8f8"
+    }
+  }, /*#__PURE__*/React.createElement("th", {
+    style: TH
+  }, "姓名"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...TH,
+      textAlign: "center"
+    }
+  }, "已排天數"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...TH,
+      textAlign: "center"
+    }
+  }, "休假天數"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...TH,
+      textAlign: "center"
+    }
+  }, "自填必休"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...TH,
+      textAlign: "center"
+    }
+  }, "狀態"))), /*#__PURE__*/React.createElement("tbody", null, restSummary.map(r => /*#__PURE__*/React.createElement("tr", {
+    key: r.name,
+    style: {
+      borderBottom: "1px solid #f0f0f0"
+    }
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "6px 8px",
+      fontWeight: 600
+    }
+  }, r.name), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "6px 8px",
+      textAlign: "center",
+      fontWeight: 700,
+      color: r.worked > r.maxWork ? "#e74c3c" : r.worked === r.maxWork ? "#27ae60" : "#e67e22"
+    }
+  }, r.worked), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "6px 8px",
+      textAlign: "center"
+    }
+  }, r.rest), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "6px 8px",
+      textAlign: "center",
+      color: "#888"
+    }
+  }, r.submitted, " 天"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "6px 8px",
+      textAlign: "center"
+    }
+  }, r.worked > r.maxWork ? /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e74c3c",
+      fontWeight: 700
+    }
+  }, "⚠️ 超排") : r.worked === r.maxWork ? /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#27ae60"
+    }
+  }, "✅ 正常") : /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#e67e22"
+    }
+  }, "排 ", r.maxWork - r.worked, " 天不足")))))))));
+}
+
 // ── EDIT SCHEDULE ────────────────────────────────────────
 function EditSched({
   emps,
   setEmps,
-  _upsertEmp,
   vY,
   vM,
   dim,
@@ -1957,8 +2341,7 @@ function EditSched({
   getEmp,
   evtDays,
   sched,
-  partAvail,
-  mustOff
+  partAvail
 }) {
   const [sel, setSel] = useState("jiufen");
   const [ed, setEd] = useState(null);
@@ -1967,34 +2350,8 @@ function EditSched({
   const open = day => {
     setEd(day);
     setSlots(JSON.parse(JSON.stringify(getSD(sel, day))));
-    setFullWarn("");
-    setAnnualLeaveWarn("");
   };
   const [annualLeaveWarn, setAnnualLeaveWarn] = useState("");
-  const [fullWarn, setFullWarn] = useState(""); // 已排滿警告
-
-  // 計算正職該月應上班天數（總天數 - 週末 - 國定假日）
-  const maxWorkDays = useMemo(() => {
-    let count = 0;
-    for (let d = 1; d <= dim; d++) {
-      const w = new Date(vY, vM, d).getDay();
-      if (w !== 0 && w !== 6 && !hols.includes(d)) count++;
-    }
-    return count;
-  }, [vY, vM, dim, hols]);
-
-  // 計算某正職已被排班的天數（跨所有門市）
-  const countScheduledDays = (empId) => {
-    const days = new Set();
-    STORE_KEYS.forEach(sk => {
-      for (let d = 1; d <= dim; d++) {
-        const key = `${vY}-${vM}-${d}`;
-        const slots = (sched[sk] || {})[key] || [];
-        if (slots.some(s => s.empId === empId && !s.leave)) days.add(d);
-      }
-    });
-    return days.size;
-  };
   const add = () => setSlots(s => [...s, {
     empId: "",
     position: "counter",
@@ -2004,27 +2361,21 @@ function EditSched({
     endTime: ""
   }]);
   const rm = i => setSlots(s => s.filter((_, x) => x !== i));
-  const up = (i, f, v) => {
+  const up = (i, f, v) => setSlots(s => s.map((sl, x) => {
+    if (x !== i) return sl;
+    const updated = {
+      ...sl,
+      [f]: v
+    };
     if (f === "empId" && v) {
-      const emp = getEmp(v);
-      if (emp && emp.type === "正職") {
-        const already = countScheduledDays(v);
-        if (already >= maxWorkDays) {
-          setFullWarn(`⚠️ ${emp.name} 本月已排滿 ${maxWorkDays} 個工作天，仍可繼續排班。`);
-        } else {
-          setFullWarn("");
-        }
-      } else {
-        setFullWarn("");
+      const avail = (partAvail[v] || []).find(o => o.year === vY && o.month === vM && o.day === ed);
+      if (avail && !updated.startTime && !updated.endTime) {
+        updated.startTime = avail.startTime || "";
+        updated.endTime = avail.endTime || "";
       }
-    } else if (f === "empId" && !v) {
-      setFullWarn("");
     }
-    setSlots(s => s.map((sl, x) => {
-      if (x !== i) return sl;
-      return { ...sl, [f]: v };
-    }));
-  };
+    return updated;
+  }));
   const doSave = finalSlots => {
     // Adjust annualLeft based on changes to leave:"annual" assignments
     const before = getSD(sel, ed);
@@ -2033,12 +2384,15 @@ function EditSched({
     const newlyAdded = [...afterAnnual].filter(id => !beforeAnnual.has(id));
     const removed = [...beforeAnnual].filter(id => !afterAnnual.has(id));
     if (newlyAdded.length || removed.length) {
-      emps.forEach(e=>{
-        let delta=0;
-        if(newlyAdded.includes(e.id)) delta-=1;
-        if(removed.includes(e.id)) delta+=1;
-        if(delta!==0) _upsertEmp({...e,annualLeft:Math.max(0,(e.annualLeft||0)+delta)});
-      });
+      setEmps(es => es.map(e => {
+        let delta = 0;
+        if (newlyAdded.includes(e.id)) delta -= 1;
+        if (removed.includes(e.id)) delta += 1;
+        return delta !== 0 ? {
+          ...e,
+          annualLeft: Math.max(0, (e.annualLeft || 0) + delta)
+        } : e;
+      }));
     }
     setSD(sel, ed, finalSlots);
     setEd(null);
@@ -2068,26 +2422,7 @@ function EditSched({
     }
     doSave(finalSlots);
   };
-  // 計算某天可安排的人力（用於 modal 加人時）
-  const getAvailableEmps = (day) => {
-    return emps.filter(e => {
-      if (!e.active || !e.stores.includes(sel)) return false;
-      if (e.type === "兼職") {
-        // 兼職：需有登記當天可上班
-        return (partAvail[e.id] || []).some(o => o.year === vY && o.month === vM && o.day === day);
-      } else {
-        // 正職：沒有必休 且 沒有被排在其他門市
-        const hasMustOff = (mustOff[e.id] || []).some(o => o.year === vY && o.month === vM && o.day === day);
-        if (hasMustOff) return false;
-        const scheduledElsewhere = STORE_KEYS.some(otherSk => {
-          if (otherSk === sel) return false;
-          return getSD(otherSk, day).some(slot => slot.empId === e.id);
-        });
-        return !scheduledElsewhere;
-      }
-    });
-  };
-  const se = ed !== null ? getAvailableEmps(ed) : [];
+  const se = emps.filter(e => e.active && e.stores.includes(sel));
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
     style: PT
   }, "手動排班"), /*#__PURE__*/React.createElement("div", {
@@ -2176,17 +2511,7 @@ function EditSched({
   }))), ed !== null && /*#__PURE__*/React.createElement(Modal, {
     title: `${STORES[sel].name} — ${vY}/${pad(vM + 1)}/${pad(ed)}${hols.includes(ed) ? " 🎌" : ""}${evtDays[sel].has(`${vY}-${vM}-${ed}::event`) ? " 🎪" : ""}`,
     onClose: () => setEd(null)
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: se.length === 0 ? "#e74c3c" : "#27ae60",
-      marginBottom: 10,
-      padding: "6px 10px",
-      background: se.length === 0 ? "#fdf0f0" : "#f0fdf4",
-      borderRadius: 6,
-      borderLeft: `3px solid ${se.length === 0 ? "#e74c3c" : "#27ae60"}`
-    }
-  }, se.length === 0 ? "⚠️ 今日無可安排人力（兼職未登記可上班，正職均有必休或已排他店）" : `✅ 今日可安排人力：${se.filter(e=>e.type==="兼職").length} 名兼職 ／ ${se.filter(e=>e.type==="正職").length} 名正職`), slots.map((sl, i) => /*#__PURE__*/React.createElement("div", {
+  }, slots.map((sl, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: {
       display: "flex",
@@ -2205,14 +2530,10 @@ function EditSched({
     }
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, se.length === 0 ? "（無可安排人力）" : "— 選擇可用人力 —"), se.map(e => {
-    const avail = e.type === "兼職" ? (partAvail[e.id] || []).find(o => o.year === vY && o.month === vM && o.day === ed) : null;
-    const timeLabel = avail && avail.startTime && avail.endTime ? ` ${avail.startTime}~${avail.endTime}` : "";
-    return /*#__PURE__*/React.createElement("option", {
-      key: e.id,
-      value: e.id
-    }, e.type === "兼職" ? "【兼】" : "【正】", " ", e.name, "(", e.eng, ")", timeLabel, e.role === "barista" ? " 🟠" : "");
-  })), /*#__PURE__*/React.createElement("select", {
+  }, "— 員工 —"), se.map(e => /*#__PURE__*/React.createElement("option", {
+    key: e.id,
+    value: e.id
+  }, e.name, "(", e.eng, ")", e.type === "兼職" ? " 【兼】" : "", e.role === "barista" ? " 🟠" : ""))), /*#__PURE__*/React.createElement("select", {
     value: sl.position,
     onChange: e => up(i, "position", e.target.value),
     style: SS
@@ -2304,17 +2625,7 @@ function EditSched({
       color: "#c0392b",
       marginBottom: 6
     }
-  }, "⚠️ ", annualLeaveWarn), fullWarn && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: "#e67e22",
-      marginBottom: 6,
-      padding: "5px 10px",
-      background: "#fff8f0",
-      borderRadius: 6,
-      borderLeft: "3px solid #e67e22"
-    }
-  }, fullWarn), /*#__PURE__*/React.createElement("button", {
+  }, "⚠️ ", annualLeaveWarn), /*#__PURE__*/React.createElement("button", {
     onClick: add,
     style: {
       background: "#f0f0f0",
@@ -2636,8 +2947,7 @@ function ViewSched({
 // ── STAFF MANAGER ────────────────────────────────────────
 function StaffMgr({
   emps,
-  setEmps,
-  _upsertEmp
+  setEmps
 }) {
   const [editEmp, setEditEmp] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -2661,17 +2971,29 @@ function StaffMgr({
     personalUsed: 0
   };
   const [ne, setNe] = useState(blank);
-  const flipRole = id => { const e=emps.find(x=>x.id===id); if(e) _upsertEmp({...e,role:e.role==="barista"?"staff":"barista"}); };
-  const flip = (id,f) => { const e=emps.find(x=>x.id===id); if(e) _upsertEmp({...e,[f]:!e[f]}); };
-  const togStore = (id,k) => { const e=emps.find(x=>x.id===id); if(e) _upsertEmp({...e,stores:e.stores.includes(k)?e.stores.filter(x=>x!==k):[...e.stores,k]}); };
-  const togPrimary = (id,k) => { const e=emps.find(x=>x.id===id); if(e) _upsertEmp({...e,primaryStores:(e.primaryStores||[]).includes(k)?(e.primaryStores||[]).filter(x=>x!==k):[...(e.primaryStores||[]),k]}); };
+  const flipRole = id => setEmps(es => es.map(e => e.id === id ? {
+    ...e,
+    role: e.role === "barista" ? "staff" : "barista"
+  } : e));
+  const flip = (id, f) => setEmps(es => es.map(e => e.id === id ? {
+    ...e,
+    [f]: !e[f]
+  } : e));
+  const togStore = (id, k) => setEmps(es => es.map(e => e.id === id ? {
+    ...e,
+    stores: e.stores.includes(k) ? e.stores.filter(x => x !== k) : [...e.stores, k]
+  } : e));
+  const togPrimary = (id, k) => setEmps(es => es.map(e => e.id === id ? {
+    ...e,
+    primaryStores: (e.primaryStores || []).includes(k) ? (e.primaryStores || []).filter(x => x !== k) : [...(e.primaryStores || []), k]
+  } : e));
   const saveEdit = () => {
-    _upsertEmp(editEmp);
+    setEmps(es => es.map(e => e.id === editEmp.id ? editEmp : e));
     setEditEmp(null);
   };
   const addEmp = () => {
     if (!ne.id || !ne.name) return;
-    _upsertEmp(ne);
+    setEmps(e => [...e, ne]);
     setShowAdd(false);
     setNe(blank);
   };
@@ -2896,8 +3218,7 @@ function StaffMgr({
     onClose: () => setEditEmp(null)
   }, /*#__PURE__*/React.createElement(EmpForm, {
     emp: editEmp,
-    setEmp: setEditEmp,
-    showStores: true
+    setEmp: setEditEmp
   }), /*#__PURE__*/React.createElement(MBtns, {
     onCancel: () => setEditEmp(null),
     onSave: saveEdit
@@ -2906,8 +3227,7 @@ function StaffMgr({
     onClose: () => setShowAdd(false)
   }, /*#__PURE__*/React.createElement(EmpForm, {
     emp: ne,
-    setEmp: setNe,
-    showStores: true
+    setEmp: setNe
   }), /*#__PURE__*/React.createElement(MBtns, {
     onCancel: () => setShowAdd(false),
     onSave: addEmp,
@@ -3052,22 +3372,7 @@ function EmpForm({
       width: 16,
       height: 16
     }
-  })),
-  /*#__PURE__*/React.createElement("div", { style: { display:"flex", alignItems:"center", gap:8 } },
-    /*#__PURE__*/React.createElement("label", { style: LS }, "在職"),
-    /*#__PURE__*/React.createElement("input", { type:"checkbox", checked:!!emp.active, onChange:e=>up("active",e.target.checked), style:{width:16,height:16} })
-  ),
-  !emp.active && /*#__PURE__*/React.createElement(React.Fragment, null,
-    /*#__PURE__*/React.createElement("div", null,
-      /*#__PURE__*/React.createElement("label", { style: LS }, "離職日期"),
-      /*#__PURE__*/React.createElement("input", { type:"text", placeholder:"例：2026/06/30", value:emp.leaveDate||"", onChange:e=>up("leaveDate",e.target.value), style:{...IS,padding:"7px 8px"} })
-    ),
-    /*#__PURE__*/React.createElement("div", { style:{gridColumn:"1/-1"} },
-      /*#__PURE__*/React.createElement("label", { style: LS }, "離職原因"),
-      /*#__PURE__*/React.createElement("textarea", { placeholder:"例：個人因素、合約到期...", value:emp.leaveReason||"", onChange:e=>up("leaveReason",e.target.value), rows:2, style:{...IS,padding:"7px 8px",resize:"vertical",width:"100%"} })
-    )
-  )
-  );
+  })));
 }
 
 // ── FILL STATUS ──────────────────────────────────────────
@@ -3294,12 +3599,14 @@ function ExtraLeaveApproval({
   vM,
   extraLeaveReqs,
   setExtraLeaveReqs,
-  _upsertExtraLeave,
   getEmp
 }) {
   const monthReqs = extraLeaveReqs.filter(r => r.year === vY && r.month === vM);
   if (!monthReqs.length) return null;
-  const setStatus=(id,status)=>{ const r=extraLeaveReqs.find(x=>x.id===id); if(!r)return; const u={...r,status}; _upsertExtraLeave(u); syncLeaveReq(u,emps); };
+  const setStatus = (id, status) => setExtraLeaveReqs(p => p.map(r => r.id === id ? {
+    ...r,
+    status
+  } : r));
   const statusLabel = {
     pending: "待審核",
     approved: "已核准",
@@ -3407,29 +3714,20 @@ function ExtraLeaveApproval({
 // ── HR PAGE ──────────────────────────────────────────────
 function HRPage({
   emps,
-  setEmps,
-  _upsertEmp
+  setEmps
 }) {
   const [search, setSearch] = useState("");
   const [editEmp, setEditEmp] = useState(null);
-  const [showAdd, setShowAdd] = useState(false);
-  const blank = {
-    id: "", name: "", eng: "", type: "正職", role: "staff", certified: false,
-    stores: [], primaryStores: [], fixedHQ: false, active: true,
-    joinDate: "", seniority: "", annualLeft: 0, annualExpiry: "—",
-    lastLeaveGrant: null, sickUsed: 0, personalUsed: 0
-  };
-  const [ne, setNe] = useState(blank);
-  const addEmp = () => {
-    if (!ne.id || !ne.name) return;
-    _upsertEmp(ne);
-    setShowAdd(false);
-    setNe(blank);
-  };
   const fil = emps.filter(e => e.name.includes(search) || e.eng.toLowerCase().includes(search.toLowerCase()) || e.id.includes(search));
   const save = () => {
-    const base = emps.find(e=>e.id===editEmp.id)||{};
-    _upsertEmp({...base, type:editEmp.type, stores:editEmp.stores, annualLeft:editEmp.annualLeft, annualExpiry:editEmp.annualExpiry, sickUsed:editEmp.sickUsed, personalUsed:editEmp.personalUsed, active:editEmp.active, leaveDate:editEmp.leaveDate||"", leaveReason:editEmp.leaveReason||""});
+    setEmps(es => es.map(e => e.id === editEmp.id ? {
+      ...e,
+      stores: editEmp.stores,
+      annualLeft: editEmp.annualLeft,
+      annualExpiry: editEmp.annualExpiry,
+      sickUsed: editEmp.sickUsed,
+      personalUsed: editEmp.personalUsed
+    } : e));
     setEditEmp(null);
   };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
@@ -3447,19 +3745,7 @@ function HRPage({
       ...IS,
       maxWidth: 280
     }
-  }), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setShowAdd(true),
-    style: {
-      background: "#27ae60",
-      color: "#fff",
-      border: "none",
-      borderRadius: 6,
-      padding: "8px 16px",
-      cursor: "pointer",
-      fontWeight: 700,
-      marginLeft: 12
-    }
-  }, "+ 新增員工")), /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement("div", {
     style: CA
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3649,36 +3935,7 @@ function HRPage({
       ...IS,
       padding: "7px 8px"
     }
-  }))),
-  /*#__PURE__*/React.createElement("div", null,
-    /*#__PURE__*/React.createElement("label", { style: LS }, "類型"),
-    /*#__PURE__*/React.createElement("select", {
-      value: editEmp.type,
-      onChange: e => setEditEmp(em => ({...em, type: e.target.value})),
-      style: SS
-    },
-      /*#__PURE__*/React.createElement("option", { value: "正職" }, "正職"),
-      /*#__PURE__*/React.createElement("option", { value: "兼職" }, "兼職")
-    )
-  )),
-  /*#__PURE__*/React.createElement("div", { style: { marginTop: 12 } },
-    /*#__PURE__*/React.createElement("label", { style: LS }, "⚠️ 離職管理"),
-    /*#__PURE__*/React.createElement("div", { style: { display:"flex", alignItems:"center", gap:8, marginBottom:8 } },
-      /*#__PURE__*/React.createElement("input", { type:"checkbox", checked:!!editEmp.active, onChange:e=>setEditEmp(em=>({...em,active:e.target.checked})), style:{width:16,height:16} }),
-      /*#__PURE__*/React.createElement("span", { style:{fontWeight:600} }, "在職")
-    ),
-    !editEmp.active && /*#__PURE__*/React.createElement("div", { style:{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 } },
-      /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("label", { style:LS }, "離職日期"),
-        /*#__PURE__*/React.createElement("input", { type:"text", placeholder:"例：2026/06/30", value:editEmp.leaveDate||"", onChange:e=>setEditEmp(em=>({...em,leaveDate:e.target.value})), style:{...IS,padding:"7px 8px"} })
-      ),
-      /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("label", { style:LS }, "離職原因"),
-        /*#__PURE__*/React.createElement("input", { type:"text", placeholder:"例：個人因素、合約到期...", value:editEmp.leaveReason||"", onChange:e=>setEditEmp(em=>({...em,leaveReason:e.target.value})), style:{...IS,padding:"7px 8px"} })
-      )
-    )
-  ),
-  /*#__PURE__*/React.createElement(MBtns, {
+  })))), /*#__PURE__*/React.createElement(MBtns, {
     onCancel: () => setEditEmp(null),
     onSave: save
   })), /*#__PURE__*/React.createElement("div", {
@@ -3714,18 +3971,7 @@ function HRPage({
       color: "#aaa",
       fontSize: 13
     }
-  }, "無紀錄")))), showAdd && /*#__PURE__*/React.createElement(Modal, {
-    title: "新增員工",
-    onClose: () => setShowAdd(false)
-  }, /*#__PURE__*/React.createElement(EmpForm, {
-    emp: ne,
-    setEmp: setNe,
-    showStores: true
-  }), /*#__PURE__*/React.createElement(MBtns, {
-    onCancel: () => setShowAdd(false),
-    onSave: addEmp,
-    label: "新增"
-  })));
+  }, "無紀錄")))));
 }
 
 // ── MY SCHEDULE ──────────────────────────────────────────
@@ -4198,7 +4444,6 @@ function MyFill({
 // ── EXTRA LEAVE REQUEST (employee section) ──────────────
 function ExtraLeaveSection({
   emp,
-  _upsertExtraLeave,
   vY,
   vM,
   dim,
@@ -4219,9 +4464,16 @@ function ExtraLeaveSection({
       return;
     }
     setWarn("");
-    const newReq={id:`${emp.id}-${vY}-${vM}-${day}-${Date.now()}`,empId:emp.id,year:vY,month:vM,day:Number(day),leaveType:reason.trim(),reason:reason.trim(),status:"pending",ts:Date.now()};
-    _upsertExtraLeave(newReq);
-    syncLeaveReq(newReq,[emp]);
+    setExtraLeaveReqs(p => [...p, {
+      id: `${emp.id}-${vY}-${vM}-${day}-${Date.now()}`,
+      empId: emp.id,
+      year: vY,
+      month: vM,
+      day: Number(day),
+      reason: reason.trim(),
+      status: "pending",
+      ts: Date.now()
+    }]);
     setDay("");
     setReason("");
   };
@@ -4366,7 +4618,6 @@ const REVIEW_DIMS = [{
 function AssessMgr({
   emps,
   setEmps,
-  _upsertEmp,
   vY,
   vM,
   skillAssess,
@@ -4407,11 +4658,11 @@ function AssessMgr({
           return s.key === stage ? result === "pass" : r === "pass";
         });
         if (allPass) {
-          {const _e=emps.find(e=>e.id===empId); if(_e) _upsertEmp({..._e,
+          setEmps(es => es.map(e => e.id === empId ? {
             ...e,
             role: "barista",
             certified: true
-          });}
+          } : e));
         }
         return p;
       });
@@ -4898,8 +5149,7 @@ function MyOvertime({
   vM,
   dim,
   overtimeReqs,
-  setOvertimeReqs,
-  _upsertOT
+  setOvertimeReqs
 }) {
   const emp = emps.find(e => e.name === user.name);
   const [day, setDay] = useState("");
@@ -4935,9 +5185,17 @@ function MyOvertime({
       return;
     }
     setWarn("");
-    const newOT={id:`${emp.id}-${vY}-${vM}-${day}-${Date.now()}`,empId:emp.id,year:vY,month:vM,day:Number(day),hours:Number(hours),reason:reason.trim(),status:"pending",ts:Date.now()};
-    _upsertOT(newOT);
-    syncOvertimeReq(newOT,[emp]);
+    setOvertimeReqs(p => [...p, {
+      id: `${emp.id}-${vY}-${vM}-${day}-${Date.now()}`,
+      empId: emp.id,
+      year: vY,
+      month: vM,
+      day: Number(day),
+      hours: Number(hours),
+      reason: reason.trim(),
+      status: "pending",
+      ts: Date.now()
+    }]);
     setDay("");
     setHours("");
     setReason("");
@@ -5058,7 +5316,6 @@ function MyOvertime({
 // ── HOURS MANAGEMENT (manager) ──────────────────────────
 function HoursMgr({
   emps,
-  _upsertOT,
   vY,
   vM,
   dim,
@@ -5081,7 +5338,10 @@ function HoursMgr({
     approved: "#27ae60",
     rejected: "#e74c3c"
   };
-  const setStatus=(id,status)=>{ const r=overtimeReqs.find(x=>x.id===id); if(!r)return; const u={...r,status}; _upsertOT(u); syncOvertimeReq(u,emps); };
+  const setStatus = (id, status) => setOvertimeReqs(p => p.map(r => r.id === id ? {
+    ...r,
+    status
+  } : r));
 
   // Calculate part-timer total hours from schedule
   const partTimerHours = empId => {
@@ -5254,377 +5514,7 @@ function HoursMgr({
   }, fullTimerOT(e.id).toFixed(1), " 小時")))))));
 }
 
-// ── MY LEAVE (employee) ──────────────────────────────────
-function MyLeave({ emps, user, leaveReqs, setLeaveReqs, _upsertLeave, sched, now }) {
-  const emp = emps.find(e => e.id === user.empId);
-  const [tab, setTab] = useState("summary"); // summary | apply | history
-  const [form, setForm] = useState({ leaveType: "annual", sickType: "outpatient", reason: "", dates: [] });
-  const [dateInput, setDateInput] = useState("");
-  const [formErr, setFormErr] = useState("");
-  const [formOk, setFormOk] = useState("");
-
-  if (!emp) return null;
-
-  // ── 年假計算（依入職週年區間）──────────────────────────
-  const joinDate = parseJoinDate(emp.joinDate);
-  const annualPeriods = [];
-  if (joinDate) {
-    const currentNow = now;
-    // 從第一個週年開始算到現在
-    for (let yr = 1; yr <= 30; yr++) {
-      const periodStart = new Date(joinDate.getFullYear() + yr, joinDate.getMonth(), joinDate.getDate());
-      if (periodStart > currentNow) break;
-      const periodEnd = new Date(joinDate.getFullYear() + yr + 1, joinDate.getMonth(), joinDate.getDate());
-      const entitled = annualLeaveEntitlement(yr);
-      if (entitled === 0) continue;
-      const expiryStr = `${periodEnd.getFullYear() - 1911}/${String(periodEnd.getMonth() + 1).padStart(2, "0")}/${String(periodEnd.getDate()).padStart(2, "0")}`;
-      // 計算這個區間已核准的年假天數（從 leaveReqs + sched 標記）
-      const approvedInPeriod = leaveReqs.filter(r =>
-        r.empId === emp.id && r.leaveType === "annual" && r.status === "approved" &&
-        r.dates.some(d => {
-          const dt = new Date(d.year, d.month, d.day);
-          return dt >= periodStart && dt < periodEnd;
-        })
-      ).reduce((acc, r) => acc + r.dates.filter(d => {
-        const dt = new Date(d.year, d.month, d.day);
-        return dt >= periodStart && dt < periodEnd;
-      }).length, 0);
-      annualPeriods.push({ yr, periodStart, periodEnd, entitled, used: approvedInPeriod, expiryStr });
-    }
-  }
-
-  // ── 病假統計（自然年）──────────────────────────────────
-  const curYear = now.getFullYear();
-  const sickApproved = leaveReqs.filter(r => r.empId === emp.id && r.leaveType === "sick" && r.status === "approved");
-  const sickOutpatientUsed = sickApproved.filter(r => r.sickType === "outpatient").reduce((a, r) => a + r.dates.length, 0);
-  const sickInpatientUsed = sickApproved.filter(r => r.sickType === "inpatient").reduce((a, r) => a + r.dates.length, 0);
-  // 事假統計（自然年）
-  const personalApproved = leaveReqs.filter(r => r.empId === emp.id && r.leaveType === "personal" && r.status === "approved" &&
-    r.dates.some(d => d.year === curYear));
-  const personalUsed = personalApproved.reduce((a, r) => a + r.dates.filter(d => d.year === curYear).length, 0);
-
-  // ── 申請表單 ──────────────────────────────────────────
-  const addDate = () => {
-    if (!dateInput) return;
-    const [y, m, d] = dateInput.split("-").map(Number);
-    if (form.dates.some(x => x.year === y && x.month === m - 1 && x.day === d)) return;
-    setForm(f => ({ ...f, dates: [...f.dates, { year: y, month: m - 1, day: d }].sort((a, b) => new Date(a.year, a.month, a.day) - new Date(b.year, b.month, b.day)) }));
-    setDateInput("");
-  };
-  const removeDate = idx => setForm(f => ({ ...f, dates: f.dates.filter((_, i) => i !== idx) }));
-
-  const submit = () => {
-    setFormErr(""); setFormOk("");
-    if (form.dates.length === 0) { setFormErr("請選擇至少一個日期"); return; }
-    if (form.leaveType === "sick" && !form.sickType) { setFormErr("請選擇病假類型"); return; }
-    const req = {
-      id: `LV${Date.now()}`,
-      empId: emp.id,
-      dates: form.dates,
-      leaveType: form.leaveType,
-      sickType: form.leaveType === "sick" ? form.sickType : null,
-      reason: form.reason,
-      status: "pending",
-      rejectReason: "",
-      ts: Date.now()
-    };
-    _upsertLeave(req);
-    syncFullLeaveReq(req,[emp]);
-    setForm({ leaveType: "annual", sickType: "outpatient", reason: "", dates: [] });
-    setFormOk("申請已送出，等待店長審核。");
-  };
-
-  const myReqs = leaveReqs.filter(r => r.empId === emp.id).sort((a, b) => b.ts - a.ts);
-  const statusLabel = { pending: "待審核", approved: "已核准", rejected: "已拒絕" };
-  const statusColor = { pending: "#e67e22", approved: "#27ae60", rejected: "#e74c3c" };
-  const leaveLabel = { annual: "年假", sick: "病假", personal: "事假" };
-  const sickTypeLabel = { outpatient: "未住院", inpatient: "住院" };
-
-  const tabBtn = (key, label) => /*#__PURE__*/React.createElement("button", {
-    onClick: () => setTab(key),
-    style: { background: tab === key ? "#1a1a2e" : "#f0f0f0", color: tab === key ? "#e8b86d" : "#555", border: "none", borderRadius: 8, padding: "7px 16px", fontWeight: 700, cursor: "pointer", fontSize: 13 }
-  }, label);
-
-  return /*#__PURE__*/React.createElement("div", null,
-    /*#__PURE__*/React.createElement("h2", { style: PT }, "我的假勤 — ", emp.name),
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 7, marginBottom: 16 } },
-      tabBtn("summary", "假勤總覽"),
-      tabBtn("apply", "申請假單"),
-      tabBtn("history", "申請紀錄")
-    ),
-
-    tab === "summary" && /*#__PURE__*/React.createElement(React.Fragment, null,
-      // 年假
-      /*#__PURE__*/React.createElement("div", { style: { ...CA, marginBottom: 14 } },
-        /*#__PURE__*/React.createElement("h3", { style: CT }, "📅 年假（依入職週年計算）"),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "#888", marginBottom: 10 } }, "入職日：", emp.joinDate),
-        annualPeriods.length === 0
-          ? /*#__PURE__*/React.createElement("div", { style: { color: "#aaa", fontSize: 13 } }, "尚無年假紀錄（服務未滿6個月）")
-          : /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 13 } },
-              /*#__PURE__*/React.createElement("thead", null,
-                /*#__PURE__*/React.createElement("tr", { style: { background: "#f8f8f8" } },
-                  /*#__PURE__*/React.createElement("th", { style: TH }, "週年"),
-                  /*#__PURE__*/React.createElement("th", { style: TH }, "給假天數"),
-                  /*#__PURE__*/React.createElement("th", { style: TH }, "已用"),
-                  /*#__PURE__*/React.createElement("th", { style: TH }, "剩餘"),
-                  /*#__PURE__*/React.createElement("th", { style: TH }, "到期日")
-                )
-              ),
-              /*#__PURE__*/React.createElement("tbody", null,
-                annualPeriods.map(p => /*#__PURE__*/React.createElement("tr", { key: p.yr, style: { borderBottom: "1px solid #f0f0f0" } },
-                  /*#__PURE__*/React.createElement("td", { style: TD }, `第 ${p.yr} 年`),
-                  /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center", fontWeight: 700 } }, p.entitled, " 天"),
-                  /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center", color: "#e74c3c" } }, p.used, " 天"),
-                  /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center", fontWeight: 700, color: p.entitled - p.used > 0 ? "#27ae60" : "#aaa" } }, Math.max(0, p.entitled - p.used), " 天"),
-                  /*#__PURE__*/React.createElement("td", { style: { ...TD, fontSize: 12, color: "#888" } }, p.expiryStr)
-                ))
-              )
-            )
-      ),
-      // 病假
-      /*#__PURE__*/React.createElement("div", { style: { ...CA, marginBottom: 14 } },
-        /*#__PURE__*/React.createElement("h3", { style: CT }, "🏥 病假（勞基法，按自然年）"),
-        /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 13 } },
-          /*#__PURE__*/React.createElement("thead", null,
-            /*#__PURE__*/React.createElement("tr", { style: { background: "#f8f8f8" } },
-              /*#__PURE__*/React.createElement("th", { style: TH }, "類型"),
-              /*#__PURE__*/React.createElement("th", { style: TH }, "上限"),
-              /*#__PURE__*/React.createElement("th", { style: TH }, "已用"),
-              /*#__PURE__*/React.createElement("th", { style: TH }, "剩餘")
-            )
-          ),
-          /*#__PURE__*/React.createElement("tbody", null,
-            /*#__PURE__*/React.createElement("tr", { style: { borderBottom: "1px solid #f0f0f0" } },
-              /*#__PURE__*/React.createElement("td", { style: TD }, "未住院"),
-              /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center" } }, "30 天／年"),
-              /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center", color: "#e74c3c" } }, sickOutpatientUsed, " 天"),
-              /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center", fontWeight: 700, color: 30 - sickOutpatientUsed > 0 ? "#27ae60" : "#aaa" } }, Math.max(0, 30 - sickOutpatientUsed), " 天")
-            ),
-            /*#__PURE__*/React.createElement("tr", null,
-              /*#__PURE__*/React.createElement("td", { style: TD }, "住院"),
-              /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center" } }, "一年內合計不超過1年"),
-              /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center", color: "#e74c3c" } }, sickInpatientUsed, " 天"),
-              /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center", fontWeight: 700, color: "#888" } }, "—")
-            )
-          )
-        )
-      ),
-      // 事假
-      /*#__PURE__*/React.createElement("div", { style: CA },
-        /*#__PURE__*/React.createElement("h3", { style: CT }, "📋 事假（勞基法，按自然年）"),
-        /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 13 } },
-          /*#__PURE__*/React.createElement("thead", null,
-            /*#__PURE__*/React.createElement("tr", { style: { background: "#f8f8f8" } },
-              /*#__PURE__*/React.createElement("th", { style: TH }, "上限"),
-              /*#__PURE__*/React.createElement("th", { style: TH }, "已用（今年）"),
-              /*#__PURE__*/React.createElement("th", { style: TH }, "剩餘")
-            )
-          ),
-          /*#__PURE__*/React.createElement("tbody", null,
-            /*#__PURE__*/React.createElement("tr", null,
-              /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center" } }, "14 天／年"),
-              /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center", color: "#e74c3c" } }, personalUsed, " 天"),
-              /*#__PURE__*/React.createElement("td", { style: { ...TD, textAlign: "center", fontWeight: 700, color: 14 - personalUsed > 0 ? "#27ae60" : "#aaa" } }, Math.max(0, 14 - personalUsed), " 天")
-            )
-          )
-        )
-      )
-    ),
-
-    tab === "apply" && /*#__PURE__*/React.createElement("div", { style: CA },
-      /*#__PURE__*/React.createElement("h3", { style: CT }, "申請假單"),
-      // 假別
-      /*#__PURE__*/React.createElement("div", { style: { marginBottom: 12 } },
-        /*#__PURE__*/React.createElement("label", { style: LS }, "假別"),
-        /*#__PURE__*/React.createElement("select", {
-          value: form.leaveType,
-          onChange: e => setForm(f => ({ ...f, leaveType: e.target.value })),
-          style: { ...IS, width: "auto" }
-        },
-          /*#__PURE__*/React.createElement("option", { value: "annual" }, "年假"),
-          /*#__PURE__*/React.createElement("option", { value: "sick" }, "病假"),
-          /*#__PURE__*/React.createElement("option", { value: "personal" }, "事假")
-        )
-      ),
-      // 病假類型
-      form.leaveType === "sick" && /*#__PURE__*/React.createElement("div", { style: { marginBottom: 12, padding: "10px 12px", background: "#fff8f0", borderRadius: 8, borderLeft: "3px solid #e67e22" } },
-        /*#__PURE__*/React.createElement("label", { style: LS }, "病假類型"),
-        /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, marginBottom: 6 } },
-          ["outpatient", "inpatient"].map(t => /*#__PURE__*/React.createElement("label", { key: t, style: { display: "flex", alignItems: "center", gap: 5, fontSize: 13, cursor: "pointer" } },
-            /*#__PURE__*/React.createElement("input", { type: "radio", name: "sickType", value: t, checked: form.sickType === t, onChange: () => setForm(f => ({ ...f, sickType: t })) }),
-            t === "outpatient" ? "未住院（上限30天／年）" : "住院（上限一年內合計1年）"
-          ))
-        ),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "#e67e22" } }, "⚠️ 病假需提供病假證明，店長核准後才會生效。")
-      ),
-      // 日期
-      /*#__PURE__*/React.createElement("div", { style: { marginBottom: 12 } },
-        /*#__PURE__*/React.createElement("label", { style: LS }, "請假日期（可多選）"),
-        /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 7, marginBottom: 7 } },
-          /*#__PURE__*/React.createElement("input", { type: "date", value: dateInput, onChange: e => setDateInput(e.target.value), style: { ...IS, width: "auto" } }),
-          /*#__PURE__*/React.createElement("button", { onClick: addDate, style: { ...SB, padding: "8px 14px" } }, "+ 加入")
-        ),
-        form.dates.length > 0 && /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
-          form.dates.map((d, i) => /*#__PURE__*/React.createElement("div", {
-            key: i,
-            style: { background: "#1a1a2e", color: "#e8b86d", borderRadius: 16, padding: "3px 10px", fontSize: 12, display: "flex", alignItems: "center", gap: 5 }
-          },
-            `${d.year}/${String(d.month + 1).padStart(2, "0")}/${String(d.day).padStart(2, "0")}`,
-            /*#__PURE__*/React.createElement("span", { onClick: () => removeDate(i), style: { cursor: "pointer", fontWeight: 700 } }, " ✕")
-          ))
-        )
-      ),
-      // 事由
-      /*#__PURE__*/React.createElement("div", { style: { marginBottom: 14 } },
-        /*#__PURE__*/React.createElement("label", { style: LS }, form.leaveType === "sick" ? "備註（選填）" : form.leaveType === "personal" ? "事由（選填）" : "備註（選填）"),
-        /*#__PURE__*/React.createElement("textarea", {
-          value: form.reason,
-          onChange: e => setForm(f => ({ ...f, reason: e.target.value })),
-          placeholder: form.leaveType === "personal" ? "請填寫請假事宜（可不填）" : "",
-          style: { ...IS, height: 70, resize: "vertical" }
-        })
-      ),
-      formErr && /*#__PURE__*/React.createElement("div", { style: { color: "#e74c3c", fontSize: 12, marginBottom: 8 } }, formErr),
-      formOk && /*#__PURE__*/React.createElement("div", { style: { color: "#27ae60", fontSize: 12, marginBottom: 8 } }, "✅ ", formOk),
-      /*#__PURE__*/React.createElement("button", { onClick: submit, style: { ...SB, padding: "10px 24px" } }, "送出申請")
-    ),
-
-    tab === "history" && /*#__PURE__*/React.createElement("div", { style: CA },
-      /*#__PURE__*/React.createElement("h3", { style: CT }, "申請紀錄"),
-      myReqs.length === 0
-        ? /*#__PURE__*/React.createElement("div", { style: { color: "#aaa", fontSize: 13 } }, "尚無申請紀錄")
-        : myReqs.map(r => /*#__PURE__*/React.createElement("div", {
-            key: r.id,
-            style: { padding: "12px 0", borderBottom: "1px solid #f0f0f0" }
-          },
-            /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 } },
-              /*#__PURE__*/React.createElement("span", { style: { fontWeight: 700, fontSize: 14 } }, leaveLabel[r.leaveType], r.sickType ? `（${sickTypeLabel[r.sickType]}）` : ""),
-              /*#__PURE__*/React.createElement("span", { style: { color: statusColor[r.status], fontWeight: 700, fontSize: 13 } }, statusLabel[r.status])
-            ),
-            /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "#555", marginBottom: 3 } },
-              "日期：", r.dates.map(d => `${d.year}/${String(d.month + 1).padStart(2, "0")}/${String(d.day).padStart(2, "0")}`).join("、"),
-              `（共 ${r.dates.length} 天）`
-            ),
-            r.reason && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "#888" } }, "事由：", r.reason),
-            r.status === "rejected" && r.rejectReason && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "#e74c3c", marginTop: 3 } }, "拒絕原因：", r.rejectReason)
-          ))
-    )
-  );
-}
-
-// ── LEAVE MANAGER (manager) ──────────────────────────────
-function LeaveMgr({ emps, leaveReqs, setLeaveReqs, _upsertLeave, setSD, getSD, vY, vM, now }) {
-  const [tab, setTab] = useState("pending"); // pending | all
-  const [rejectModal, setRejectModal] = useState(null); // {id}
-  const [rejectReason, setRejectReason] = useState("");
-
-  const getEmp = id => emps.find(e => e.id === id);
-  const leaveLabel = { annual: "年假", sick: "病假", personal: "事假" };
-  const sickTypeLabel = { outpatient: "未住院", inpatient: "住院" };
-  const statusLabel = { pending: "待審核", approved: "已核准", rejected: "已拒絕" };
-  const statusColor = { pending: "#e67e22", approved: "#27ae60", rejected: "#e74c3c" };
-  const leavePosColor = { annual: "#27ae60", sick: "#e74c3c", personal: "#8e44ad" };
-
-  const pending = leaveReqs.filter(r => r.status === "pending").sort((a, b) => b.ts - a.ts);
-  const all = leaveReqs.sort((a, b) => b.ts - a.ts);
-  const list = tab === "pending" ? pending : all;
-
-  const approve = (id) => {
-    const req = leaveReqs.find(r => r.id === id);
-    if (!req) return;
-    // 在班表中標記假別
-    req.dates.forEach(d => {
-      const existingSlots = getSD ? getSD(null, null, d) : [];
-      // 找該員工在哪個門市（或直接新增假單 slot）
-      // 在所有門市找有無該員工排班，若有則加上 leave 標記，若無則在第一個所屬門市新增
-      const emp = getEmp(req.empId);
-      let placed = false;
-      if (emp) {
-        STORE_KEYS.forEach(sk => {
-          if (placed) return;
-          const key = `${d.year}-${d.month}-${d.day}`;
-          // Use setSD via setSched equivalent — we'll mark directly
-        });
-      }
-    });
-    const _r=leaveReqs.find(x=>x.id===id); if(_r){ const u={..._r,status:"approved"}; _upsertLeave(u); syncFullLeaveReq(u,emps); }
-  };
-
-  const reject = (id) => {
-    const _r2=leaveReqs.find(x=>x.id===id); if(_r2){ const u={..._r2,status:"rejected",rejectReason}; _upsertLeave(u); syncFullLeaveReq(u,emps); }
-    setRejectModal(null);
-    setRejectReason("");
-  };
-
-  const tabBtn = (key, label, count) => /*#__PURE__*/React.createElement("button", {
-    onClick: () => setTab(key),
-    style: { background: tab === key ? "#1a1a2e" : "#f0f0f0", color: tab === key ? "#e8b86d" : "#555", border: "none", borderRadius: 8, padding: "7px 16px", fontWeight: 700, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }
-  }, label, count > 0 && /*#__PURE__*/React.createElement("span", { style: { background: "#e74c3c", color: "#fff", borderRadius: 99, padding: "1px 7px", fontSize: 11 } }, count));
-
-  return /*#__PURE__*/React.createElement("div", null,
-    /*#__PURE__*/React.createElement("h2", { style: PT }, "假單審核"),
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 7, marginBottom: 16 } },
-      tabBtn("pending", "待審核", pending.length),
-      tabBtn("all", "所有假單", 0)
-    ),
-    /*#__PURE__*/React.createElement("div", { style: CA },
-      list.length === 0
-        ? /*#__PURE__*/React.createElement("div", { style: { color: "#aaa", fontSize: 13, padding: 8 } }, tab === "pending" ? "目前無待審核假單 🎉" : "尚無假單紀錄")
-        : list.map(r => {
-            const emp = getEmp(r.empId);
-            return /*#__PURE__*/React.createElement("div", {
-              key: r.id,
-              style: { padding: "14px 0", borderBottom: "1px solid #f0f0f0" }
-            },
-              /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 } },
-                /*#__PURE__*/React.createElement("div", null,
-                  /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, fontSize: 14, marginBottom: 3 } },
-                    /*#__PURE__*/React.createElement("span", { style: { color: leavePosColor[r.leaveType], marginRight: 6 } }, leaveLabel[r.leaveType]),
-                    emp?.name, "（", emp?.eng, "）",
-                    r.sickType && /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "#e67e22", marginLeft: 4 } }, `[${sickTypeLabel[r.sickType]}]`)
-                  ),
-                  /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "#555", marginBottom: 3 } },
-                    "日期：", r.dates.map(d => `${d.year}/${String(d.month + 1).padStart(2, "0")}/${String(d.day).padStart(2, "0")}`).join("、"),
-                    `（共 ${r.dates.length} 天）`
-                  ),
-                  r.leaveType === "sick" && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "#e67e22", marginBottom: 3 } }, "⚠️ 請確認已收到病假證明"),
-                  r.reason && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "#888" } }, "事由：", r.reason),
-                  r.status === "rejected" && r.rejectReason && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "#e74c3c", marginTop: 3 } }, "拒絕原因：", r.rejectReason)
-                ),
-                /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
-                  r.status !== "pending"
-                    ? /*#__PURE__*/React.createElement("span", { style: { color: statusColor[r.status], fontWeight: 700, fontSize: 13 } }, statusLabel[r.status])
-                    : /*#__PURE__*/React.createElement(React.Fragment, null,
-                        /*#__PURE__*/React.createElement("button", {
-                          onClick: () => approve(r.id),
-                          style: { background: "#27ae60", color: "#fff", border: "none", borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontWeight: 600, fontSize: 13 }
-                        }, "核准"),
-                        /*#__PURE__*/React.createElement("button", {
-                          onClick: () => { setRejectModal({ id: r.id }); setRejectReason(""); },
-                          style: { background: "#e74c3c", color: "#fff", border: "none", borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontWeight: 600, fontSize: 13 }
-                        }, "拒絕")
-                      )
-                )
-              )
-            );
-          })
-    ),
-    rejectModal && /*#__PURE__*/React.createElement(Modal, { title: "填寫拒絕原因", onClose: () => setRejectModal(null) },
-      /*#__PURE__*/React.createElement("div", { style: { marginBottom: 12 } },
-        /*#__PURE__*/React.createElement("label", { style: LS }, "拒絕原因（選填）"),
-        /*#__PURE__*/React.createElement("textarea", {
-          value: rejectReason,
-          onChange: e => setRejectReason(e.target.value),
-          style: { ...IS, height: 80, resize: "vertical" },
-          placeholder: "可填寫拒絕原因讓員工知道"
-        })
-      ),
-      /*#__PURE__*/React.createElement(MBtns, { onCancel: () => setRejectModal(null), onSave: () => reject(rejectModal.id), label: "確認拒絕" })
-    )
-  );
-}
-
-
+// ── MODAL ────────────────────────────────────────────────
 function Modal({
   title,
   children,
@@ -5748,6 +5638,7 @@ const SB = {
   fontWeight: 700,
   cursor: "pointer"
 };
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(React.createElement(App));
 </script>
